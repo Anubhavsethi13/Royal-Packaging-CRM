@@ -1,0 +1,14 @@
+{
+  "name": "@royal-packaging/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@royal-packaging/config": "file:../config",
+    "kysely": "^0.28.2",
+    "pg": "^8.16.3"
+  }
+}

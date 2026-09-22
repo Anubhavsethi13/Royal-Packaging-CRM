@@ -1,0 +1,5 @@
+# Frontend Security UX
+
+The Phase 3 auth provider is a mock presentation layer with explicit `loading`, `authenticated`, `unauthenticated`, and `expired` states. It supports sign in, sign out, protected-route redirects, unauthorized and session-expired screens, deterministic invalid-preview input feedback, password visibility control, and a role-based permission predicate. It does not authenticate users or authorize data access.
+
+Forms use Zod validation where input is accepted, prevent duplicate submission while a preview request is pending, and reserve structured field errors for the future API response. Errors are shown in context, empty and stale states are explicit, destructive or mutating work is preview-labelled, and no secrets are placed in source or mock data. Dialogs close with Escape and return focus to their close control. The frontend treats values from future APIs as untrusted display data and leaves authorization, validation, audit integrity, rate limiting, and session security to the backend.

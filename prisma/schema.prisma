@@ -1,0 +1,361 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  admin
+  user
+}
+
+enum EmployeeRole {
+  admin
+  loader
+  operator
+  picker
+  supervisor
+}
+
+enum OrderStatus {
+  draft
+  confirmed
+  in_production
+  ready
+  dispatched
+  completed
+  cancelled
+}
+
+enum Priority {
+  low
+  normal
+  high
+  urgent
+}
+
+enum InventoryStatus {
+  available
+  damaged
+  in_transit
+  reserved
+  staged
+}
+
+enum MovementType {
+  load
+  putaway
+  stage
+  transfer
+  unload
+}
+
+enum TaskStatus {
+  queued
+  in_progress
+  completed
+}
+
+enum TaskType {
+  loading
+  packing
+  putaway
+  staging
+  unloading
+  wrapping
+}
+
+enum IncentiveRuleType {
+  quality
+  speed
+  spot_reward
+  volume
+}
+
+enum PayrollStatus {
+  pending
+  approved
+  paid
+}
+
+model User {
+  id             String          @id @default(uuid())
+  email          String          @unique
+  displayName    String
+  avatarUrl      String?
+  role           UserRole        @default(user)
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  password       UserPassword?
+  sessions       Session[]
+  employee       Employee?
+  accessRoles    UserAccessRole[]
+  auditLogs      AccessAuditLog[]
+}
+
+model UserPassword {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  createdAt    DateTime @default(now())
+  lastAccessed DateTime @default(now())
+  expiresAt    DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, expiresAt])
+}
+
+model LoginAttempt {
+  id          String   @id @default(uuid())
+  email       String
+  attemptedAt DateTime @default(now())
+  success     Boolean
+  @@index([email, attemptedAt])
+}
+
+model Employee {
+  id              String       @id @default(uuid())
+  employeeCode    String       @unique
+  displayName     String
+  role            EmployeeRole
+  shiftName       String?
+  hourlyRate      Decimal?     @db.Decimal(12, 2)
+  active          Boolean      @default(true)
+  userId          String?      @unique
+  createdAt       DateTime     @default(now())
+  user            User?        @relation(fields: [userId], references: [id])
+  movements       InventoryMovement[]
+  tasks           Task[]
+  incentiveEvents IncentiveEvent[]
+  payrollLedger   PayrollLedger[]
+}
+
+model Client {
+  id             String          @id @default(uuid())
+  accountCode    String          @unique
+  name           String
+  contactName    String?
+  phone          String?
+  materialSpecs  Json?
+  openOrders     Int?
+  createdAt      DateTime        @default(now())
+  orders         Order[]
+  inventoryItems InventoryItem[]
+  tasks          Task[]
+  dockSchedules  DockSchedule[]
+}
+
+model Order {
+  id            String      @id @default(uuid())
+  orderCode     String      @unique
+  clientId      String
+  materialName  String
+  materialSpecs Json?
+  quantity      Decimal?    @db.Decimal(14, 3)
+  unit          String?
+  weightKg      Decimal?    @db.Decimal(14, 3)
+  volumeM3      Decimal?    @db.Decimal(14, 3)
+  status        OrderStatus @default(draft)
+  priority      Priority    @default(normal)
+  requestedAt   DateTime?
+  dueAt         DateTime?
+  notes         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  client        Client      @relation(fields: [clientId], references: [id])
+  @@index([clientId, status])
+  @@index([dueAt, priority])
+}
+
+model InventoryItem {
+  id              String          @id @default(uuid())
+  barcode         String          @unique
+  clientId        String?
+  locationCode    String?
+  materialName    String
+  materialType    String?
+  quantity        Decimal?        @db.Decimal(14, 3)
+  sku             String?
+  status          InventoryStatus @default(available)
+  unit            String?
+  volumeM3        Decimal?        @db.Decimal(14, 3)
+  weightKg        Decimal?        @db.Decimal(14, 3)
+  updatedAt       DateTime        @updatedAt
+  client          Client?         @relation(fields: [clientId], references: [id])
+  movements       InventoryMovement[]
+  tasks           Task[]
+  @@index([locationCode, status])
+}
+
+model InventoryMovement {
+  id              String        @id @default(uuid())
+  inventoryItemId String
+  taskId          String?
+  employeeId      String?
+  movementType    MovementType
+  fromLocation    String?
+  toLocation      String?
+  quantity        Decimal?      @db.Decimal(14, 3)
+  weightKg        Decimal?      @db.Decimal(14, 3)
+  volumeM3        Decimal?      @db.Decimal(14, 3)
+  scannedAt       DateTime      @default(now())
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  task            Task?         @relation(fields: [taskId], references: [id])
+  employee        Employee?     @relation(fields: [employeeId], references: [id])
+  @@index([inventoryItemId, scannedAt])
+  @@index([taskId])
+}
+
+model Task {
+  id              String         @id @default(uuid())
+  employeeId      String?
+  taskType        TaskType
+  inventoryItemId String?
+  clientId        String?
+  referenceCode   String?
+  status          TaskStatus     @default(queued)
+  fromLocation    String?
+  toLocation      String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  durationMinutes Int?
+  weightKg        Decimal?       @db.Decimal(14, 3)
+  volumeM3        Decimal?       @db.Decimal(14, 3)
+  qualityScore    Decimal?       @db.Decimal(5, 2)
+  damageRate      Decimal?       @db.Decimal(5, 2)
+  createdAt       DateTime       @default(now())
+  employee        Employee?      @relation(fields: [employeeId], references: [id])
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+  client          Client?        @relation(fields: [clientId], references: [id])
+  movements       InventoryMovement[]
+  incentiveEvents IncentiveEvent[]
+  payrollLedger   PayrollLedger[]
+  @@index([status, taskType])
+  @@index([employeeId, createdAt])
+}
+
+model PalletAsset {
+  id           String   @id @default(uuid())
+  assetCode    String   @unique
+  assetType    String
+  locationCode String?
+  reusable     Boolean  @default(false)
+  status       String?
+  updatedAt    DateTime @updatedAt
+  @@index([locationCode, status])
+}
+
+model DockSchedule {
+  id              String   @id @default(uuid())
+  dockCode        String
+  direction       String
+  vehicleNumber   String?
+  materialSummary String?
+  scheduledAt     DateTime
+  status          String?
+  clientId        String?
+  createdAt       DateTime @default(now())
+  client          Client?  @relation(fields: [clientId], references: [id])
+  @@index([dockCode, scheduledAt])
+}
+
+model IncentiveRule {
+  id        String            @id @default(uuid())
+  name      String
+  ruleType  IncentiveRuleType
+  threshold Decimal?          @db.Decimal(14, 3)
+  payout    Decimal?          @db.Decimal(14, 2)
+  active    Boolean           @default(true)
+  events    IncentiveEvent[]
+}
+
+model IncentiveEvent {
+  id         String         @id @default(uuid())
+  employeeId String
+  taskId     String?
+  ruleId     String?
+  points     Decimal?       @db.Decimal(14, 3)
+  cashAmount Decimal?       @db.Decimal(14, 2)
+  reason     String?
+  createdAt  DateTime       @default(now())
+  employee   Employee       @relation(fields: [employeeId], references: [id])
+  task       Task?          @relation(fields: [taskId], references: [id])
+  rule       IncentiveRule? @relation(fields: [ruleId], references: [id])
+  payroll    PayrollLedger[]
+  @@index([employeeId, createdAt])
+}
+
+model PayrollLedger {
+  id               String          @id @default(uuid())
+  employeeId       String
+  incentiveEventId String?
+  taskId           String?
+  amount           Decimal?        @db.Decimal(14, 2)
+  points           Decimal?        @db.Decimal(14, 3)
+  status           PayrollStatus   @default(pending)
+  approvedBy       String?
+  approvedAt       DateTime?
+  periodStart      DateTime
+  periodEnd        DateTime
+  notes            String?
+  createdAt        DateTime        @default(now())
+  employee         Employee        @relation(fields: [employeeId], references: [id])
+  incentiveEvent   IncentiveEvent? @relation(fields: [incentiveEventId], references: [id])
+  task             Task?           @relation(fields: [taskId], references: [id])
+  @@index([employeeId, periodStart, periodEnd])
+  @@index([status, periodStart])
+}
+
+model AccessRole {
+  id              String                 @id @default(uuid())
+  name            String                 @unique
+  description     String?
+  rolePermissions  AccessRolePermission[]
+  userRoles       UserAccessRole[]
+}
+
+model AccessPermission {
+  id              String                 @id @default(uuid())
+  name            String                 @unique
+  description     String?
+  rolePermissions  AccessRolePermission[]
+}
+
+model AccessRolePermission {
+  roleId       String
+  permissionId String
+  role         AccessRole       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   AccessPermission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  @@id([roleId, permissionId])
+}
+
+model UserAccessRole {
+  userId String
+  roleId String
+  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   AccessRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  @@id([userId, roleId])
+}
+
+model AccessAuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String
+  resource   String?
+  resourceId String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+  @@index([userId, createdAt])
+  @@index([resource, resourceId])
+}

@@ -1,0 +1,41 @@
+{
+  "name": "royal-packaging-crm",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Royal Packaging CRM and Warehouse backend workspace",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "start": "tsx apps/api/src/server.ts",
+    "dev": "tsx watch apps/api/src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "db:migrate": "tsx packages/db/src/migrate.ts",
+    "test": "tsx --test tests/config.test.ts tests/database.test.ts tests/core-schema.test.ts tests/commercial-schema.test.ts tests/inventory-schema.test.ts tests/task-schema.test.ts tests/quality-photo-schema.test.ts tests/auth-schema.test.ts tests/authentication.test.ts tests/rbac.test.ts tests/incentive-schema.test.ts tests/kpi-schema.test.ts tests/inventory-service.test.ts tests/task-service.test.ts tests/quality-service.test.ts tests/incentive-service.test.ts tests/warehouse-orchestrator.test.ts tests/api-application.test.ts tests/rbac-authority.test.ts tests/pagination-envelope.test.ts",
+    "test:integration": "tsx --test tests/postgres-integration.test.ts tests/commercial-integration.test.ts tests/warehouse-compat-integration.test.ts tests/analytics-integration.test.ts tests/payroll-reports-integration.test.ts tests/collection-routes-integration.test.ts",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@types/node": "^24.3.0",
+    "@types/pg": "^8.15.5",
+    "bcryptjs": "^3.0.2",
+    "jose": "^6.1.0",
+    "kysely": "^0.28.2",
+    "pg": "^8.16.3",
+    "superjson": "^2.2.2",
+    "tsx": "^4.20.5",
+    "zod": "^4.1.12",
+    "typescript": "^5.9.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "eslint": "^9.35.0",
+    "typescript-eslint": "^8.42.0"
+  }
+}
