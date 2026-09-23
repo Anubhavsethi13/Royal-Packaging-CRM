@@ -145,48 +145,77 @@ export async function seedDatabase(): Promise<void> {
     await checkDatabaseHealth(database);
     console.log("[INFO] Connected to PostgreSQL for administrative seed.");
 
-    // 1. Ensure initial admin user exists in `users`
-    let adminUser = await database
-      .selectFrom("users")
-      .select(["id", "login_identifier"])
-      .where("login_identifier", "=", adminEmail)
-      .executeTakeFirst();
+    // 1. Ensure initial admin, superadmin, and supervisor users exist in `users`
+    const defaultUsers = [
+      {
+        email: adminEmail,
+        password: adminPassword,
+        name: adminName,
+        department: "Management",
+        roles: ["SUPER_ADMIN", "ADMIN"]
+      },
+      {
+        email: process.env.SEED_SUPERADMIN_EMAIL || (isProduction ? undefined : "superadmin@royalpackaging.com"),
+        password: process.env.SEED_SUPERADMIN_PASSWORD || (isProduction ? undefined : "SuperAdmin@123456"),
+        name: "Super Administrator",
+        department: "Executive Leadership",
+        roles: ["SUPER_ADMIN"]
+      },
+      {
+        email: process.env.SEED_SUPERVISOR_EMAIL || (isProduction ? undefined : "supervisor@royalpackaging.com"),
+        password: process.env.SEED_SUPERVISOR_PASSWORD || (isProduction ? undefined : "Supervisor@123456"),
+        name: "Warehouse Supervisor",
+        department: "Warehouse Operations",
+        roles: ["SUPERVISOR"]
+      }
+    ].filter((u): u is { email: string; password: string; name: string; department: string; roles: string[] } => Boolean(u.email && u.password));
 
-    if (!adminUser) {
-      const userId = crypto.randomUUID();
-      const passwordHash = await hashPassword(adminPassword);
+    const userMap = new Map<string, { id: string; roles: string[] }>();
 
-      await database
-        .insertInto("users")
-        .values({
-          id: userId,
-          login_identifier: adminEmail,
-          password_hash: passwordHash,
-          is_active: true
-        })
-        .execute();
+    for (const u of defaultUsers) {
+      let existingUser = await database
+        .selectFrom("users")
+        .select(["id", "login_identifier"])
+        .where("login_identifier", "=", u.email)
+        .executeTakeFirst();
 
-      // Also ensure employee record exists for user
-      const employeeId = crypto.randomUUID();
-      await database
-        .insertInto("employees")
-        .values({
-          id: employeeId,
-          user_id: userId,
-          employee_code: `EMP-${userId.slice(0, 8).toUpperCase()}`,
-          name: adminName,
-          department: "Management",
-          is_active: true
-        })
-        .execute();
+      if (!existingUser) {
+        const userId = crypto.randomUUID();
+        const passwordHash = await hashPassword(u.password);
 
-      adminUser = { id: userId, login_identifier: adminEmail };
-      console.log(`[SEED] Created administrator account: ${adminEmail}`);
-    } else {
-      console.log(`[SEED] Administrator account already exists: ${adminEmail}`);
+        await database
+          .insertInto("users")
+          .values({
+            id: userId,
+            login_identifier: u.email,
+            password_hash: passwordHash,
+            is_active: true
+          })
+          .execute();
+
+        const employeeId = crypto.randomUUID();
+        await database
+          .insertInto("employees")
+          .values({
+            id: employeeId,
+            user_id: userId,
+            employee_code: `EMP-${userId.slice(0, 8).toUpperCase()}`,
+            name: u.name,
+            department: u.department,
+            is_active: true
+          })
+          .execute();
+
+        existingUser = { id: userId, login_identifier: u.email };
+        console.log(`[SEED] Created account: ${u.email}`);
+      } else {
+        console.log(`[SEED] Account already exists: ${u.email}`);
+      }
+
+      userMap.set(u.email, { id: existingUser.id, roles: u.roles });
     }
 
-    const creatorId = adminUser.id;
+    const creatorId = userMap.get(adminEmail)?.id || crypto.randomUUID();
 
     // 2. Ensure roles exist in `access_roles`
     const roleIdMap = new Map<string, string>();
@@ -281,30 +310,32 @@ export async function seedDatabase(): Promise<void> {
     }
     console.log(`[SEED] Role-permission mappings up to date (${newBindingsCount} new bindings added).`);
 
-    // 5. Assign admin user to SUPER_ADMIN and ADMIN roles
-    for (const roleCode of ["SUPER_ADMIN", "ADMIN"]) {
-      const roleId = roleIdMap.get(roleCode);
-      if (!roleId) continue;
+    // 5. Assign roles to seeded users
+    for (const [email, { id: userId, roles }] of userMap.entries()) {
+      for (const roleCode of roles) {
+        const roleId = roleIdMap.get(roleCode);
+        if (!roleId) continue;
 
-      const existingAssignment = await database
-        .selectFrom("user_access_roles")
-        .select("id")
-        .where("user_id", "=", adminUser.id)
-        .where("role_id", "=", roleId)
-        .where("revoked_at", "is", null)
-        .executeTakeFirst();
+        const existingAssignment = await database
+          .selectFrom("user_access_roles")
+          .select("id")
+          .where("user_id", "=", userId)
+          .where("role_id", "=", roleId)
+          .where("revoked_at", "is", null)
+          .executeTakeFirst();
 
-      if (!existingAssignment) {
-        await database
-          .insertInto("user_access_roles")
-          .values({
-            id: crypto.randomUUID(),
-            user_id: adminUser.id,
-            role_id: roleId,
-            assigned_by_user_id: creatorId
-          })
-          .execute();
-        console.log(`[SEED] Assigned ${roleCode} role to ${adminEmail}`);
+        if (!existingAssignment) {
+          await database
+            .insertInto("user_access_roles")
+            .values({
+              id: crypto.randomUUID(),
+              user_id: userId,
+              role_id: roleId,
+              assigned_by_user_id: creatorId
+            })
+            .execute();
+          console.log(`[SEED] Assigned ${roleCode} role to ${email}`);
+        }
       }
     }
 
