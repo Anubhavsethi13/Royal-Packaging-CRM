@@ -266,6 +266,146 @@ test("Clients: pagination, search, sorting, and error handling", async () => {
   assert.equal(resUnauth.status, 401);
 });
 
+test("Clients: Create (POST /clients), Detail (GET /clients/:id), and Update (PATCH /clients/:id) with PostgreSQL persistence", async () => {
+  // 1. Unauthenticated mutations -> 401
+  const unauthPost = await fetch(`${serverUrl}/clients`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Unauth Corp", account_code: "CL-UNAUTH" })
+  });
+  assert.equal(unauthPost.status, 401);
+
+  // 2. Validation error (missing required account_code) -> 400
+  const invalidPost = await fetch(`${serverUrl}/clients`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({ name: "Incomplete Corp" })
+  });
+  assert.equal(invalidPost.status, 400);
+  const invalidJson = (await invalidPost.json()) as { success: boolean; error?: { code: string } };
+  assert.equal(invalidJson.success, false);
+  assert.equal(invalidJson.error?.code, "VALIDATION_FAILED");
+
+  // 3. Valid creation -> 201 + PostgreSQL persistence
+  const createRes = await fetch(`${serverUrl}/clients`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({
+      name: "Omega Holdings",
+      account_code: "CL-OMEGA-01",
+      contact_name: "Anita Roy",
+      phone: "+91 80 1122 3344",
+      status: "active"
+    })
+  });
+  assert.equal(createRes.status, 201);
+  const createJson = (await createRes.json()) as { success: boolean; data: Record<string, unknown> };
+  assert.equal(createJson.success, true);
+  const clientId = createJson.data.id as string;
+  assert.ok(clientId);
+  assert.equal(createJson.data.name, "Omega Holdings");
+  assert.equal(createJson.data.accountCode, "CL-OMEGA-01");
+  assert.equal(createJson.data.contactName, "Anita Roy");
+  assert.equal(createJson.data.phone, "+91 80 1122 3344");
+
+  // Verify PostgreSQL persistence directly
+  const dbRow = await db.selectFrom("clients").selectAll().where("id", "=", clientId).executeTakeFirst();
+  assert.ok(dbRow);
+  assert.equal(dbRow.name, "Omega Holdings");
+  assert.equal(dbRow.account_code, "CL-OMEGA-01");
+  assert.equal(dbRow.contact_name, "Anita Roy");
+  assert.equal(dbRow.phone, "+91 80 1122 3344");
+
+  // 4. Duplicate account_code -> 409
+  const dupRes = await fetch(`${serverUrl}/clients`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({
+      name: "Duplicate Corp",
+      account_code: "CL-OMEGA-01"
+    })
+  });
+  assert.equal(dupRes.status, 409);
+
+  // 5. GET /clients/:id - Detail retrieval
+  // 5a. Invalid UUID format -> 400
+  const invalidIdRes = await fetch(`${serverUrl}/clients/not-a-valid-uuid`, {
+    headers: { Cookie: authCookie }
+  });
+  assert.equal(invalidIdRes.status, 400);
+
+  // 5b. Non-existent UUID -> 404
+  const randomUuid = crypto.randomUUID();
+  const notFoundRes = await fetch(`${serverUrl}/clients/${randomUuid}`, {
+    headers: { Cookie: authCookie }
+  });
+  assert.equal(notFoundRes.status, 404);
+
+  // 5c. Valid ID -> 200
+  const detailRes = await fetch(`${serverUrl}/clients/${clientId}`, {
+    headers: { Cookie: authCookie }
+  });
+  assert.equal(detailRes.status, 200);
+  const detailJson = (await detailRes.json()) as { success: boolean; data: Record<string, unknown> };
+  assert.equal(detailJson.success, true);
+  assert.equal(detailJson.data.id, clientId);
+  assert.equal(detailJson.data.name, "Omega Holdings");
+  assert.equal(detailJson.data.accountCode, "CL-OMEGA-01");
+
+  // 6. PATCH /clients/:id - Update
+  // 6a. Invalid UUID -> 400
+  const invalidPatchId = await fetch(`${serverUrl}/clients/invalid-uuid`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({ name: "Updated" })
+  });
+  assert.equal(invalidPatchId.status, 400);
+
+  // 6b. Non-existent UUID -> 404
+  const notFoundPatch = await fetch(`${serverUrl}/clients/${randomUuid}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({ name: "Updated" })
+  });
+  assert.equal(notFoundPatch.status, 404);
+
+  // 6c. Valid update -> 200 + PostgreSQL persistence
+  const updateRes = await fetch(`${serverUrl}/clients/${clientId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({
+      name: "Omega Holdings International",
+      contact_name: "Anita Roy-Sharma",
+      phone: "+91 80 9988 7766",
+      status: "inactive"
+    })
+  });
+  assert.equal(updateRes.status, 200);
+  const updateJson = (await updateRes.json()) as { success: boolean; data: Record<string, unknown> };
+  assert.equal(updateJson.success, true);
+  assert.equal(updateJson.data.name, "Omega Holdings International");
+  assert.equal(updateJson.data.contactName, "Anita Roy-Sharma");
+  assert.equal(updateJson.data.phone, "+91 80 9988 7766");
+  assert.equal(updateJson.data.status, "inactive");
+
+  // Verify PostgreSQL update directly
+  const updatedDbRow = await db.selectFrom("clients").selectAll().where("id", "=", clientId).executeTakeFirst();
+  assert.ok(updatedDbRow);
+  assert.equal(updatedDbRow.name, "Omega Holdings International");
+  assert.equal(updatedDbRow.contact_name, "Anita Roy-Sharma");
+  assert.equal(updatedDbRow.phone, "+91 80 9988 7766");
+  assert.equal(updatedDbRow.status, "inactive");
+
+  // 7. Re-read updated client via GET /clients/:id
+  const refreshRes = await fetch(`${serverUrl}/clients/${clientId}`, {
+    headers: { Cookie: authCookie }
+  });
+  assert.equal(refreshRes.status, 200);
+  const refreshJson = (await refreshRes.json()) as { success: boolean; data: Record<string, unknown> };
+  assert.equal(refreshJson.data.name, "Omega Holdings International");
+  assert.equal(refreshJson.data.status, "inactive");
+});
+
 // ============================================================================
 // 2. ORDERS COLLECTION ENDPOINT
 // ============================================================================
@@ -320,6 +460,174 @@ test("Orders: pagination, status filter, sorting, and error handling", async () 
   // 5. Invalid page
   const resInvalid = await fetch(`${serverUrl}/orders?page=-1`, { headers: { Cookie: authCookie } });
   assert.equal(resInvalid.status, 400);
+});
+
+test("Orders: Create (POST /orders), Detail (GET /orders/:id), Update (PATCH /orders/:id), and Cancel (POST /orders/:id/cancel) with PostgreSQL persistence", async () => {
+  const client = await clientsService.createClient({ name: "Royal Test Client", account_code: "CL-ROYAL-01" });
+
+  // 1. Unauthenticated mutations -> 401
+  const unauthPost = await fetch(`${serverUrl}/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: client.id, order_code: "ORD-UNAUTH" })
+  });
+  assert.equal(unauthPost.status, 401);
+
+  // 2. Validation error (missing order_code or invalid client_id) -> 400
+  const invalidPost = await fetch(`${serverUrl}/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({ client_id: "not-a-uuid" })
+  });
+  assert.equal(invalidPost.status, 400);
+  const invalidJson = (await invalidPost.json()) as { success: boolean; error?: { code: string } };
+  assert.equal(invalidJson.success, false);
+  assert.equal(invalidJson.error?.code, "VALIDATION_FAILED");
+
+  // 3. Non-existent client -> 404 (CommercialDomainError CLIENT_NOT_FOUND)
+  const nonExistentClientPost = await fetch(`${serverUrl}/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({ client_id: crypto.randomUUID(), order_code: "ORD-NOCLIENT" })
+  });
+  assert.equal(nonExistentClientPost.status, 404);
+
+  // 4. Valid creation -> 201 + PostgreSQL persistence
+  const createRes = await fetch(`${serverUrl}/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({
+      client_id: client.id,
+      order_code: "ORD-PERSIST-01",
+      material_name: "Corrugated 5-ply Heavy",
+      quantity: 1250,
+      unit: "BOX",
+      priority: "high",
+      due_at: "2026-10-15T12:00:00.000Z",
+      notes: "High priority production batch"
+    })
+  });
+  assert.equal(createRes.status, 201);
+  const createJson = (await createRes.json()) as { success: boolean; data: Record<string, unknown> };
+  assert.equal(createJson.success, true);
+  const orderId = createJson.data.id as string;
+  assert.ok(orderId);
+  assert.equal(createJson.data.orderCode, "ORD-PERSIST-01");
+  assert.equal(createJson.data.clientId, client.id);
+  assert.equal(createJson.data.materialName, "Corrugated 5-ply Heavy");
+  assert.equal(createJson.data.quantity, "1250");
+  assert.equal(createJson.data.unit, "BOX");
+  assert.equal(createJson.data.status, "draft");
+  assert.equal(createJson.data.priority, "high");
+
+  // Verify PostgreSQL row directly
+  const dbRow = await db.selectFrom("orders").selectAll().where("id", "=", orderId).executeTakeFirst();
+  assert.ok(dbRow);
+  assert.equal(dbRow.order_code, "ORD-PERSIST-01");
+  assert.equal(dbRow.client_id, client.id);
+  assert.equal(dbRow.material_name, "Corrugated 5-ply Heavy");
+  assert.equal(dbRow.quantity, "1250");
+  assert.equal(dbRow.unit, "BOX");
+  assert.equal(dbRow.status, "draft");
+  assert.equal(dbRow.priority, "high");
+
+  // 5. Duplicate order_code -> 409
+  const dupRes = await fetch(`${serverUrl}/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({
+      client_id: client.id,
+      order_code: "ORD-PERSIST-01",
+      material_name: "Another Box"
+    })
+  });
+  assert.equal(dupRes.status, 409);
+  const dupJson = (await dupRes.json()) as { success: boolean; error?: { code: string } };
+  assert.equal(dupJson.error?.code, "DUPLICATE_ORDER_CODE");
+
+  // 6. GET /orders/:id - Detail
+  // 6a. Invalid UUID -> 400
+  const invalidDetail = await fetch(`${serverUrl}/orders/not-a-uuid`, {
+    headers: { Cookie: authCookie }
+  });
+  assert.equal(invalidDetail.status, 400);
+
+  // 6b. Non-existent UUID -> 404
+  const notFoundDetail = await fetch(`${serverUrl}/orders/${crypto.randomUUID()}`, {
+    headers: { Cookie: authCookie }
+  });
+  assert.equal(notFoundDetail.status, 404);
+
+  // 6c. Valid ID -> 200
+  const detailRes = await fetch(`${serverUrl}/orders/${orderId}`, {
+    headers: { Cookie: authCookie }
+  });
+  assert.equal(detailRes.status, 200);
+  const detailJson = (await detailRes.json()) as { success: boolean; data: Record<string, unknown> };
+  assert.equal(detailJson.success, true);
+  assert.equal(detailJson.data.id, orderId);
+  assert.equal(detailJson.data.orderCode, "ORD-PERSIST-01");
+
+  // 7. PATCH /orders/:id - Update
+  // 7a. Valid forward status transition: draft -> confirmed
+  const updateRes = await fetch(`${serverUrl}/orders/${orderId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({
+      status: "confirmed",
+      material_name: "Corrugated 5-ply Heavy Updated"
+    })
+  });
+  assert.equal(updateRes.status, 200);
+  const updateJson = (await updateRes.json()) as { success: boolean; data: Record<string, unknown> };
+  assert.equal(updateJson.data.status, "confirmed");
+  assert.equal(updateJson.data.materialName, "Corrugated 5-ply Heavy Updated");
+
+  // Verify PostgreSQL update directly
+  const updatedDbRow = await db.selectFrom("orders").selectAll().where("id", "=", orderId).executeTakeFirst();
+  assert.ok(updatedDbRow);
+  assert.equal(updatedDbRow.status, "confirmed");
+  assert.equal(updatedDbRow.material_name, "Corrugated 5-ply Heavy Updated");
+  assert.equal(updatedDbRow.version, "2");
+
+  // 7b. Invalid status transition: confirmed -> completed -> 409
+  const invalidTransition = await fetch(`${serverUrl}/orders/${orderId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({ status: "completed" })
+  });
+  assert.equal(invalidTransition.status, 409);
+  const invalidTransJson = (await invalidTransition.json()) as { success: boolean; error?: { code: string } };
+  assert.equal(invalidTransJson.error?.code, "INVALID_STATUS_TRANSITION");
+
+  // 8. POST /orders/:id/cancel
+  // 8a. Cancel confirmed order -> 200
+  const cancelRes = await fetch(`${serverUrl}/orders/${orderId}/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({ reason: "Customer cancelled requirement" })
+  });
+  assert.equal(cancelRes.status, 200);
+  const cancelJson = (await cancelRes.json()) as { success: boolean; data: Record<string, unknown> };
+  assert.equal(cancelJson.data.status, "cancelled");
+  assert.equal(cancelJson.data.cancellationReason, "Customer cancelled requirement");
+
+  // Verify PostgreSQL cancellation directly
+  const cancelledDbRow = await db.selectFrom("orders").selectAll().where("id", "=", orderId).executeTakeFirst();
+  assert.ok(cancelledDbRow);
+  assert.equal(cancelledDbRow.status, "cancelled");
+  assert.equal(cancelledDbRow.cancellation_reason, "Customer cancelled requirement");
+  assert.ok(cancelledDbRow.cancelled_at);
+
+  // 8b. Cancel already cancelled order -> 409 ORDER_NOT_CANCELLABLE
+  const dupCancelRes = await fetch(`${serverUrl}/orders/${orderId}/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: authCookie },
+    body: JSON.stringify({ reason: "Cancel again" })
+  });
+  assert.equal(dupCancelRes.status, 409);
+  const dupCancelJson = (await dupCancelRes.json()) as { success: boolean; error?: { code: string } };
+  assert.equal(dupCancelJson.error?.code, "ORDER_NOT_CANCELLABLE");
 });
 
 // ============================================================================

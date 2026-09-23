@@ -17,6 +17,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "db:migrate": "tsx packages/db/src/migrate.ts",
+    "db:seed": "tsx scripts/seed-admin.ts",
     "test": "tsx --test tests/config.test.ts tests/database.test.ts tests/core-schema.test.ts tests/commercial-schema.test.ts tests/inventory-schema.test.ts tests/task-schema.test.ts tests/quality-photo-schema.test.ts tests/auth-schema.test.ts tests/authentication.test.ts tests/rbac.test.ts tests/incentive-schema.test.ts tests/kpi-schema.test.ts tests/inventory-service.test.ts tests/task-service.test.ts tests/quality-service.test.ts tests/incentive-service.test.ts tests/warehouse-orchestrator.test.ts tests/api-application.test.ts tests/rbac-authority.test.ts tests/pagination-envelope.test.ts",
     "test:integration": "tsx --test tests/postgres-integration.test.ts tests/commercial-integration.test.ts tests/warehouse-compat-integration.test.ts tests/analytics-integration.test.ts tests/payroll-reports-integration.test.ts tests/collection-routes-integration.test.ts",
     "lint": "eslint ."

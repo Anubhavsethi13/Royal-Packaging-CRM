@@ -37,14 +37,21 @@ describe('repository mode selection', () => {
     await expect(selection.repositories.kpiResults.list()).rejects.toThrow('KPI result API contract is not available');
   });
 
-  it('resolves only the supported modes and defaults an unset mode to mock', () => {
-    expect(resolveDataMode(undefined)).toBe('mock');
-    expect(resolveDataMode('mock')).toBe('mock');
-    expect(resolveDataMode('api')).toBe('api');
-    expect(() => resolveDataMode('preview')).toThrow('Invalid VITE_DATA_MODE');
+  it('resolves only the supported modes and defaults an unset mode to mock in development', () => {
+    expect(resolveDataMode(undefined, false)).toBe('mock');
+    expect(resolveDataMode('mock', false)).toBe('mock');
+    expect(resolveDataMode('api', false)).toBe('api');
+    expect(() => resolveDataMode('preview', false)).toThrow('Invalid VITE_DATA_MODE');
   });
 
   it('fails API selection when configuration is missing instead of using mocks', () => {
     expect(() => createRepositorySelection('api')).toThrow('no mock fallback is available');
+  });
+
+  it('P0-03: enforces strict API mode in production and rejects mock mode or missing mode', () => {
+    expect(resolveDataMode('api', true)).toBe('api');
+    expect(() => resolveDataMode('mock', true)).toThrow("VITE_DATA_MODE cannot be set to 'mock' in production");
+    expect(() => resolveDataMode(undefined, true)).toThrow("VITE_DATA_MODE must be explicitly set to 'api' in production");
+    expect(() => resolveDataMode('', true)).toThrow("VITE_DATA_MODE must be explicitly set to 'api' in production");
   });
 });

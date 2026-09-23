@@ -1,4 +1,4 @@
-import { apiRequest } from './client';
+import { ApiError, apiRequest } from './client';
 import type { ApiListEnvelope, ApiMutationEnvelope } from './contracts';
 import { appendQueryString } from './query-string';
 import type { ListQuery, ListResponse, MutableRepository, Repository } from '../mock/repositories';
@@ -13,6 +13,7 @@ export type UpdateBodyMapper<T, TBody = unknown> = (value: Partial<Omit<T, 'id'>
 export interface ApiRepositoryConfig<T extends { id: string }> {
   resourcePath: string;
   decodeDetail: DetailDecoder<T>;
+  decodeItem?: (item: unknown) => T;
 }
 
 export function createUnavailableRepository<T extends { id: string }>(message: string): ApiRepository<T> {
@@ -27,9 +28,13 @@ export interface ApiMutableRepositoryConfig<T extends { id: string }, TCreateBod
   mapUpdate?: UpdateBodyMapper<T, TUpdateBody>;
 }
 
-export function toListResponse<T>(payload: ApiListEnvelope<T>): ListResponse<T> {
+export function toListResponse<T>(payload: ApiListEnvelope<unknown>, decodeItem?: (item: unknown) => T): ListResponse<T> {
+  const items = decodeItem
+    ? (payload.data as unknown[]).map((item) => decodeItem(item))
+    : (payload.data as T[]);
+
   return {
-    items: payload.data,
+    items,
     page: payload.meta.page,
     pageSize: payload.meta.pageSize,
     total: payload.meta.total,
@@ -37,9 +42,9 @@ export function toListResponse<T>(payload: ApiListEnvelope<T>): ListResponse<T> 
   };
 }
 
-export async function apiListRequest<T>(resourcePath: string, query?: ListQuery): Promise<ListResponse<T>> {
-  const payload = await apiRequest<ApiListEnvelope<T>>(appendQueryString(resourcePath, query));
-  return toListResponse(payload);
+export async function apiListRequest<T>(resourcePath: string, query?: ListQuery, decodeItem?: (item: unknown) => T): Promise<ListResponse<T>> {
+  const payload = await apiRequest<ApiListEnvelope<unknown>>(appendQueryString(resourcePath, query));
+  return toListResponse(payload, decodeItem);
 }
 
 export async function apiDetailRequest<T>(path: string, decode: DetailDecoder<T>): Promise<T> {
@@ -47,12 +52,20 @@ export async function apiDetailRequest<T>(path: string, decode: DetailDecoder<T>
   return decode(payload);
 }
 
-export async function apiMutationRequest<T, TBody>(path: string, method: 'POST' | 'PATCH', body: TBody): Promise<T> {
-  const payload = await apiRequest<ApiMutationEnvelope<T>>(path, {
+export async function apiMutationRequest<T, TBody>(
+  path: string,
+  method: 'POST' | 'PATCH',
+  body: TBody,
+  decode?: DetailDecoder<T>
+): Promise<T> {
+  const payload = await apiRequest<unknown>(path, {
     method,
     body: JSON.stringify(body),
   });
-  return payload.data;
+  if (decode) {
+    return decode(payload);
+  }
+  return (payload as ApiMutationEnvelope<T>).data;
 }
 
 function resourceDetailPath(resourcePath: string, id: string): string {
@@ -62,10 +75,17 @@ function resourceDetailPath(resourcePath: string, id: string): string {
 export function createApiRepository<T extends { id: string }>(config: ApiRepositoryConfig<T>): ApiRepository<T> {
   return {
     async list(query) {
-      return apiListRequest<T>(config.resourcePath, query);
+      return apiListRequest<T>(config.resourcePath, query, config.decodeItem);
     },
     async getById(id) {
-      return apiDetailRequest(resourceDetailPath(config.resourcePath, id), config.decodeDetail);
+      try {
+        return await apiDetailRequest(resourceDetailPath(config.resourcePath, id), config.decodeDetail);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) {
+          return undefined as unknown as T;
+        }
+        throw err;
+      }
     },
   };
 }
@@ -73,18 +93,25 @@ export function createApiRepository<T extends { id: string }>(config: ApiReposit
 export function createApiMutableRepository<T extends { id: string }, TCreateBody = T, TUpdateBody = Partial<Omit<T, 'id'>>>(config: ApiMutableRepositoryConfig<T, TCreateBody, TUpdateBody>): ApiMutableRepository<T> {
   return {
     async list(query) {
-      return apiListRequest<T>(config.resourcePath, query);
+      return apiListRequest<T>(config.resourcePath, query, config.decodeItem);
     },
     async getById(id) {
-      return apiDetailRequest(resourceDetailPath(config.resourcePath, id), config.decodeDetail);
+      try {
+        return await apiDetailRequest(resourceDetailPath(config.resourcePath, id), config.decodeDetail);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) {
+          return undefined as unknown as T;
+        }
+        throw err;
+      }
     },
     async create(record) {
       const body = config.mapCreate ? config.mapCreate(record) : record as unknown as TCreateBody;
-      return apiMutationRequest<T, TCreateBody>(config.resourcePath, 'POST', body);
+      return apiMutationRequest<T, TCreateBody>(config.resourcePath, 'POST', body, config.decodeDetail);
     },
     async update(id, changes) {
       const body = config.mapUpdate ? config.mapUpdate(changes) : changes as unknown as TUpdateBody;
-      return apiMutationRequest<T, TUpdateBody>(resourceDetailPath(config.resourcePath, id), 'PATCH', body);
+      return apiMutationRequest<T, TUpdateBody>(resourceDetailPath(config.resourcePath, id), 'PATCH', body, config.decodeDetail);
     },
   };
 }

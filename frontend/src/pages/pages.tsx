@@ -87,22 +87,416 @@ function MockAction({ label, children = label, permission = 'action:create' }: {
 }
 
 function ClientFormDialog({ open, onClose, onSaved, clientId, clientName = '' }: { open: boolean; onClose: () => void; onSaved?: () => void; clientId?: string; clientName?: string }) {
-  const [name, setName] = useState(clientName); const [contact, setContact] = useState(''); const [phone, setPhone] = useState(''); const [error, setError] = useState(''); const [saved, setSaved] = useState(false); const [saving, setSaving] = useState(false);
+  const [name, setName] = useState(clientName);
+  const [contact, setContact] = useState('');
+  const [phone, setPhone] = useState('');
+  const [accountCode, setAccountCode] = useState('');
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const { mode, repositories: repositorySet } = useRepositories();
-  useEffect(() => { if (!open) return; const existing = mode === 'mock' && clientId ? repositorySet.clients.peek().find((client) => client.id === clientId) : undefined; setName(existing?.name ?? clientName); setContact(existing?.contactName ?? ''); setPhone(existing?.phone ?? ''); setError(''); setSaved(false); setSaving(false); }, [clientId, clientName, mode, open, repositorySet.clients]);
-  const schema = z.object({ name: z.string().trim().min(2, 'Enter a client name.').max(120, 'Client name is too long.'), contact: z.string().trim().min(2, 'Enter a contact name.').max(100, 'Contact name is too long.'), phone: z.string().trim().regex(/^[+0-9 ()-]{8,24}$/, 'Enter a valid phone number.') });
-  const submit = async (event: FormEvent) => { event.preventDefault(); if (saving) return; setError(''); if (mode !== 'mock') { setError('Client mutations are not enabled until the backend request contract is confirmed.'); return; } const parsed = schema.safeParse({ name, contact, phone }); if (!parsed.success) { setError(parsed.error.issues[0]?.message ?? 'Check the form.'); return; } setSaving(true); try { const mockRepository = repositorySet.clients; const existing = clientId ? mockRepository.peek().find((client) => client.id === clientId) : mockRepository.peek().find((client) => client.name === clientName); const record = existing ? await mockRepository.update(existing.id, { name: parsed.data.name, contactName: parsed.data.contact, phone: parsed.data.phone, lastActivity: 'Just now · Admin preview' }) : await mockRepository.create({ id: `cl-preview-${Date.now()}`, accountCode: `CL-${String(mockRepository.peek().length + 1).padStart(4, '0')}`, name: parsed.data.name, contactName: parsed.data.contact, phone: parsed.data.phone, status: 'Prospect', orderCount: 0, openOrders: 0, lastActivity: 'Just now · Admin preview', segment: 'New relationship' }); if (!record) throw new Error('The client preview could not be saved.'); setSaved(true); onSaved?.(); } catch (submitError) { setError(submitError instanceof Error ? submitError.message : 'The client preview could not be saved.'); } finally { setSaving(false); } };
-  return <Dialog open={open} title={clientName ? 'Edit client' : 'Create client'} description="Preview form only. No authoritative CRM record is changed." onClose={onClose}>{saved ? <><Alert tone="success" title="Preview saved">Saved to local preview data. The future CRM repository will own production persistence.</Alert><div className="dialog-actions"><Button onClick={onClose}>Done</Button></div></> : <form onSubmit={submit} noValidate><FormField label="Client name"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Kaveri Foods" maxLength={120} /></FormField><FormField label="Primary contact"><Input value={contact} onChange={(event) => setContact(event.target.value)} placeholder="Priya Menon" maxLength={100} /></FormField><FormField label="Phone"><Input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+91 80 4412 2080" inputMode="tel" /></FormField>{error && <Alert tone="error" title="Check the form">{error}</Alert>}<div className="dialog-actions"><Button variant="secondary" type="button" onClick={onClose}>Cancel</Button><Button type="submit" loading={saving}>{saving ? 'Saving preview' : 'Save client'}</Button></div></form>}</Dialog>;
+
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    setError('');
+    setSaved(false);
+    setSaving(false);
+
+    if (clientId) {
+      if (mode === 'mock') {
+        const existing = repositorySet.clients.peek().find((client) => client.id === clientId);
+        setName(existing?.name ?? clientName);
+        setContact(existing?.contactName ?? '');
+        setPhone(existing?.phone ?? '');
+        setAccountCode(existing?.accountCode ?? '');
+      } else {
+        void repositorySet.clients.getById(clientId).then((existing) => {
+          if (!active) return;
+          setName(existing?.name ?? clientName);
+          setContact(existing?.contactName ?? '');
+          setPhone(existing?.phone ?? '');
+          setAccountCode(existing?.accountCode ?? '');
+        }).catch((fetchErr: unknown) => {
+          if (!active) return;
+          setError(fetchErr instanceof Error ? fetchErr.message : 'Client details could not be loaded.');
+        });
+      }
+    } else {
+      setName(clientName);
+      setContact('');
+      setPhone('');
+      setAccountCode('');
+    }
+
+    return () => { active = false; };
+  }, [clientId, clientName, mode, open, repositorySet.clients]);
+
+  const schema = z.object({
+    name: z.string().trim().min(2, 'Enter a client name.').max(120, 'Client name is too long.'),
+    contact: z.string().trim().min(2, 'Enter a contact name.').max(100, 'Contact name is too long.'),
+    phone: z.string().trim().regex(/^[+0-9 ()-]{8,24}$/, 'Enter a valid phone number.'),
+    accountCode: z.string().trim().max(32).optional(),
+  });
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (saving) return;
+    setError('');
+    const parsed = schema.safeParse({ name, contact, phone, accountCode });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? 'Check the form.');
+      return;
+    }
+    setSaving(true);
+    try {
+      if (mode === 'mock') {
+        const mockRepository = repositorySet.clients;
+        const existing = clientId
+          ? mockRepository.peek().find((client) => client.id === clientId)
+          : mockRepository.peek().find((client) => client.name === clientName);
+        const record = existing
+          ? await mockRepository.update(existing.id, {
+              name: parsed.data.name,
+              contactName: parsed.data.contact,
+              phone: parsed.data.phone,
+              lastActivity: 'Just now · Admin preview'
+            })
+          : await mockRepository.create({
+              id: `cl-preview-${Date.now()}`,
+              accountCode: parsed.data.accountCode || `CL-${String(mockRepository.peek().length + 1).padStart(4, '0')}`,
+              name: parsed.data.name,
+              contactName: parsed.data.contact,
+              phone: parsed.data.phone,
+              status: 'Prospect',
+              orderCount: 0,
+              openOrders: 0,
+              lastActivity: 'Just now · Admin preview',
+              segment: 'New relationship'
+            });
+        if (!record) throw new Error('The client preview could not be saved.');
+      } else {
+        if (clientId) {
+          await repositorySet.clients.update(clientId, {
+            name: parsed.data.name,
+            contactName: parsed.data.contact,
+            phone: parsed.data.phone,
+          });
+        } else {
+          const generatedCode = parsed.data.accountCode || `CL-${Date.now().toString().slice(-6)}`;
+          await repositorySet.clients.create({
+            id: '',
+            accountCode: generatedCode,
+            name: parsed.data.name,
+            contactName: parsed.data.contact,
+            phone: parsed.data.phone,
+            status: 'Active',
+            orderCount: 0,
+            openOrders: 0,
+            lastActivity: 'Just now',
+            segment: 'General'
+          });
+        }
+      }
+      setSaved(true);
+      onSaved?.();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'The client record could not be saved.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      title={clientId || clientName ? 'Edit client' : 'Create client'}
+      description={mode === 'api' ? 'Authoritative CRM client record.' : 'Preview form only. No authoritative CRM record is changed.'}
+      onClose={onClose}
+    >
+      {saved ? (
+        <>
+          <Alert tone="success" title={mode === 'api' ? 'Client saved' : 'Preview saved'}>
+            {mode === 'api' ? 'The client record has been successfully saved.' : 'Saved to local preview data. The future CRM repository will own production persistence.'}
+          </Alert>
+          <div className="dialog-actions">
+            <Button onClick={onClose}>Done</Button>
+          </div>
+        </>
+      ) : (
+        <form onSubmit={submit} noValidate>
+          {!clientId && (
+            <FormField label="Account code">
+              <Input
+                value={accountCode}
+                onChange={(event) => setAccountCode(event.target.value)}
+                placeholder="e.g. CL-1005 (or leave empty to auto-generate)"
+                maxLength={32}
+              />
+            </FormField>
+          )}
+          <FormField label="Client name">
+            <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Kaveri Foods" maxLength={120} />
+          </FormField>
+          <FormField label="Primary contact">
+            <Input value={contact} onChange={(event) => setContact(event.target.value)} placeholder="Priya Menon" maxLength={100} />
+          </FormField>
+          <FormField label="Phone">
+            <Input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+91 80 4412 2080" inputMode="tel" />
+          </FormField>
+          {error && <Alert tone="error" title="Check the form">{error}</Alert>}
+          <div className="dialog-actions">
+            <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
+            <Button type="submit" loading={saving}>{saving ? 'Saving...' : 'Save client'}</Button>
+          </div>
+        </form>
+      )}
+    </Dialog>
+  );
 }
 
 function OrderFormDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved?: () => void }) {
-  const [client, setClient] = useState('Kaveri Foods'); const [priority, setPriority] = useState('Normal'); const [due, setDue] = useState('18 Sep 2026 · 16:00'); const [items, setItems] = useState([{ material: 'Corrugated board 5-ply', quantity: '', unit: 'BOX' }]); const [error, setError] = useState(''); const [saved, setSaved] = useState(false); const [saving, setSaving] = useState(false);
   const { mode, repositories: repositorySet } = useRepositories();
-  useEffect(() => { if (!open) return; setClient('Kaveri Foods'); setPriority('Normal'); setDue('18 Sep 2026 · 16:00'); setItems([{ material: 'Corrugated board 5-ply', quantity: '', unit: 'BOX' }]); setError(''); setSaved(false); setSaving(false); }, [open]);
-  const schema = z.object({ client: z.string().min(2), due: z.string().min(4), items: z.array(z.object({ material: z.string().min(2), quantity: z.string().regex(/^\d[\d,]*$/, 'Use a positive quantity.'), unit: z.string().min(1) })).min(1) });
-  const updateItem = (index: number, key: 'material' | 'quantity' | 'unit', value: string) => setItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item));
-  const submit = async (event: FormEvent) => { event.preventDefault(); if (saving) return; setError(''); if (mode !== 'mock') { setError('Order mutations are not enabled until the backend request contract is confirmed.'); return; } const parsed = schema.safeParse({ client, due, items }); if (!parsed.success) { setError(parsed.error.issues[0]?.message ?? 'Check the order form.'); return; } setSaving(true); try { const mockOrders = repositorySet.orders; const mockClients = repositorySet.clients; const clientRecord = mockClients.peek().find((record) => record.name === parsed.data.client); const firstItem = parsed.data.items[0]; const record = await mockOrders.create({ id: `ord-preview-${Date.now()}`, orderCode: `RP-${10500 + mockOrders.peek().length}`, clientId: clientRecord?.id ?? 'preview-client', clientName: parsed.data.client, materialName: firstItem.material, quantity: firstItem.quantity, unit: firstItem.unit, status: 'Draft', priority: priority as 'Low' | 'Normal' | 'High' | 'Urgent', dueAt: parsed.data.due, fulfillment: 0, sla: 'On track', items: parsed.data.items.map((item, index) => ({ id: `line-preview-${index}`, sku: 'SKU pending', materialName: item.material, quantity: item.quantity, unit: item.unit })), activity: [] }); setSaved(Boolean(record)); onSaved?.(); } catch (submitError) { setError(submitError instanceof Error ? submitError.message : 'The order preview could not be saved.'); } finally { setSaving(false); } };
-  return <Dialog open={open} title="Create order" description="Add one or more BOX line items for a mock customer commitment." onClose={onClose}>{saved ? <><Alert tone="success" title="Preview order created">The multi-item order form completed successfully. Lifecycle and inventory allocation remain backend work.</Alert><div className="dialog-actions"><Button onClick={onClose}>Done</Button></div></> : <form onSubmit={submit} noValidate><div className="form-grid"><FormField label="Client"><Select value={client} onChange={(event) => setClient(event.target.value)}><option>Kaveri Foods</option><option>Nexon Retail</option><option>Meridian Home</option><option>Zenith Pharma</option></Select></FormField><FormField label="Priority"><Select value={priority} onChange={(event) => setPriority(event.target.value)}><option>Normal</option><option>High</option><option>Urgent</option></Select></FormField></div><FormField label="Due date"><Input value={due} onChange={(event) => setDue(event.target.value)} placeholder="18 Sep 2026 · 16:00" /></FormField><div className="section-heading compact-heading"><div><span className="section-kicker">Line items</span><h3>Materials</h3></div><Button type="button" variant="ghost" onClick={() => setItems((current) => [...current, { material: '', quantity: '', unit: 'BOX' }])}><Plus size={14} /> Add item</Button></div><div className="line-item-editor">{items.map((item, index) => <div className="line-item-row" key={index}><Input aria-label={`Material ${index + 1}`} value={item.material} onChange={(event) => updateItem(index, 'material', event.target.value)} placeholder="Material or SKU" /><Input aria-label={`Quantity ${index + 1}`} value={item.quantity} onChange={(event) => updateItem(index, 'quantity', event.target.value)} placeholder="BOX quantity" inputMode="numeric" /><Input aria-label={`Unit ${index + 1}`} value="BOX" readOnly />{items.length > 1 && <IconButton label={`Remove item ${index + 1}`} type="button" onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}><XCircle size={16} /></IconButton>}</div>)}</div>{error && <Alert tone="error" title="Check the form">{error}</Alert>}<div className="dialog-actions"><Button variant="secondary" type="button" onClick={onClose}>Cancel</Button><Button type="submit" loading={saving}>{saving ? 'Saving preview' : 'Create order'}</Button></div></form>}</Dialog>;
+  const [clientOptions, setClientOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [clientId, setClientId] = useState('');
+  const [clientName, setClientName] = useState('Kaveri Foods');
+  const [clientSearch, setClientSearch] = useState('');
+  const [loadingClients, setLoadingClients] = useState(false);
+  const [priority, setPriority] = useState('Normal');
+  const [due, setDue] = useState('18 Sep 2026 · 16:00');
+  const [items, setItems] = useState([{ material: 'Corrugated board 5-ply', quantity: '', unit: 'BOX' }]);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setError('');
+    setSaved(false);
+    setSaving(false);
+    setPriority('Normal');
+    setDue('18 Sep 2026 · 16:00');
+    setItems([{ material: 'Corrugated board 5-ply', quantity: '', unit: 'BOX' }]);
+    setClientSearch('');
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    setLoadingClients(true);
+
+    const timer = setTimeout(() => {
+      void repositorySet.clients.list({ page: 1, pageSize: 50, search: clientSearch.trim() || undefined }).then((res) => {
+        if (!active) return;
+        const options = res.items.map((c) => ({ id: c.id, name: c.name }));
+        setClientOptions(options);
+        setLoadingClients(false);
+        if (options.length > 0) {
+          setClientId((prev) => {
+            const exists = options.some((o) => o.id === prev);
+            if (!exists) {
+              setClientName(options[0].name);
+              return options[0].id;
+            }
+            return prev;
+          });
+        } else {
+          setClientId('');
+          setClientName('');
+        }
+      }).catch((fetchErr: unknown) => {
+        if (!active) return;
+        setLoadingClients(false);
+        setError(fetchErr instanceof Error ? fetchErr.message : 'Clients could not be loaded.');
+      });
+    }, clientSearch ? 250 : 0);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [clientSearch, open, repositorySet.clients]);
+
+  const schema = z.object({
+    due: z.string().min(4),
+    items: z.array(z.object({
+      material: z.string().min(2, 'Enter a material name.'),
+      quantity: z.string().regex(/^\d[\d,]*$/, 'Use a positive quantity.'),
+      unit: z.string().min(1)
+    })).min(1)
+  });
+
+  const updateItem = (index: number, key: 'material' | 'quantity' | 'unit', value: string) =>
+    setItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item));
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (saving) return;
+    setError('');
+    const parsed = schema.safeParse({ due, items });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? 'Check the order form.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const firstItem = parsed.data.items[0];
+      if (mode === 'mock') {
+        const mockOrders = repositorySet.orders;
+        const mockClients = repositorySet.clients;
+        const clientRecord = mockClients.peek().find((record) => record.id === clientId || record.name === clientName);
+        const record = await mockOrders.create({
+          id: `ord-preview-${Date.now()}`,
+          orderCode: `RP-${10500 + mockOrders.peek().length}`,
+          clientId: clientRecord?.id ?? clientId ?? 'preview-client',
+          clientName: clientRecord?.name ?? clientName ?? 'Customer Account',
+          materialName: firstItem.material,
+          quantity: firstItem.quantity,
+          unit: firstItem.unit,
+          status: 'Draft',
+          priority: priority as 'Low' | 'Normal' | 'High' | 'Urgent',
+          dueAt: parsed.data.due,
+          fulfillment: 0,
+          sla: 'On track',
+          items: parsed.data.items.map((item, index) => ({
+            id: `line-preview-${index}`,
+            sku: 'SKU pending',
+            materialName: item.material,
+            quantity: item.quantity,
+            unit: item.unit
+          })),
+          activity: []
+        });
+        if (!record) throw new Error('The order preview could not be saved.');
+      } else {
+        if (!clientId) {
+          setError('Select a valid client.');
+          setSaving(false);
+          return;
+        }
+        const generatedCode = `RP-${Math.floor(10000 + Math.random() * 90000)}`;
+        await repositorySet.orders.create({
+          id: '',
+          orderCode: generatedCode,
+          clientId,
+          clientName,
+          materialName: firstItem.material,
+          quantity: firstItem.quantity,
+          unit: firstItem.unit,
+          status: 'Draft',
+          priority: priority as 'Low' | 'Normal' | 'High' | 'Urgent',
+          dueAt: parsed.data.due,
+          fulfillment: 0,
+          sla: 'On track',
+          items: parsed.data.items.map((item, index) => ({
+            id: `item-${index}`,
+            sku: 'SKU pending',
+            materialName: item.material,
+            quantity: item.quantity,
+            unit: item.unit
+          })),
+          activity: []
+        });
+      }
+      setSaved(true);
+      onSaved?.();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'The order could not be saved.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      title={mode === 'api' ? 'Create order' : 'Create order preview'}
+      description={mode === 'api' ? 'Authoritative CRM order record with line items.' : 'Add one or more BOX line items for a mock customer commitment.'}
+      onClose={onClose}
+    >
+      {saved ? (
+        <>
+          <Alert tone="success" title={mode === 'api' ? 'Order created' : 'Preview order created'}>
+            {mode === 'api'
+              ? 'The order has been successfully created and persisted to PostgreSQL.'
+              : 'The multi-item order form completed successfully. Lifecycle and inventory allocation remain backend work.'}
+          </Alert>
+          <div className="dialog-actions">
+            <Button onClick={onClose}>Done</Button>
+          </div>
+        </>
+      ) : (
+        <form onSubmit={submit} noValidate>
+          <div className="form-grid">
+            <FormField label="Client">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <Input
+                  placeholder="Filter or search clients..."
+                  value={clientSearch}
+                  onChange={(event) => setClientSearch(event.target.value)}
+                  aria-label="Search clients"
+                />
+                <Select
+                  value={clientId}
+                  onChange={(event) => {
+                    const id = event.target.value;
+                    setClientId(id);
+                    const found = clientOptions.find((c) => c.id === id);
+                    if (found) setClientName(found.name);
+                  }}
+                  aria-label="Select client"
+                >
+                  {clientOptions.length === 0 ? (
+                    <option value="">{loadingClients ? 'Searching clients...' : 'No clients found'}</option>
+                  ) : (
+                    clientOptions.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))
+                  )}
+                </Select>
+              </div>
+            </FormField>
+            <FormField label="Priority">
+              <Select value={priority} onChange={(event) => setPriority(event.target.value)}>
+                <option>Normal</option>
+                <option>High</option>
+                <option>Urgent</option>
+                <option>Low</option>
+              </Select>
+            </FormField>
+          </div>
+          <FormField label="Due date">
+            <Input value={due} onChange={(event) => setDue(event.target.value)} placeholder="18 Sep 2026 · 16:00" />
+          </FormField>
+          <div className="section-heading compact-heading">
+            <div><span className="section-kicker">Line items</span><h3>Materials</h3></div>
+            <Button type="button" variant="ghost" onClick={() => setItems((current) => [...current, { material: '', quantity: '', unit: 'BOX' }])}>
+              <Plus size={14} /> Add item
+            </Button>
+          </div>
+          <div className="line-item-editor">
+            {items.map((item, index) => (
+              <div className="line-item-row" key={index}>
+                <Input aria-label={`Material ${index + 1}`} value={item.material} onChange={(event) => updateItem(index, 'material', event.target.value)} placeholder="Material or SKU" />
+                <Input aria-label={`Quantity ${index + 1}`} value={item.quantity} onChange={(event) => updateItem(index, 'quantity', event.target.value)} placeholder="BOX quantity" inputMode="numeric" />
+                <Input aria-label={`Unit ${index + 1}`} value="BOX" readOnly />
+                {items.length > 1 && (
+                  <IconButton label={`Remove item ${index + 1}`} type="button" onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
+                    <XCircle size={16} />
+                  </IconButton>
+                )}
+              </div>
+            ))}
+          </div>
+          {error && <Alert tone="error" title="Check the form">{error}</Alert>}
+          <div className="dialog-actions">
+            <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
+            <Button type="submit" loading={saving}>{saving ? 'Saving...' : 'Create order'}</Button>
+          </div>
+        </form>
+      )}
+    </Dialog>
+  );
 }
 
 export function DashboardPage() {
@@ -122,6 +516,7 @@ export function ClientsPage() {
   const [status, setStatus] = useState('all');
   const [revision, setRevision] = useState(0);
   const [sort, setSort] = useState('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
   const [formOpen, setFormOpen] = useState(false);
@@ -133,7 +528,7 @@ export function ClientsPage() {
     let active = true;
     setLoading(true);
     setError(null);
-    void loadClientList(repositorySet.clients, mode, { page, pageSize, search: query, status, sort }).then((result) => {
+    void loadClientList(repositorySet.clients, mode, { page, pageSize, search: query, status, sort, sortDirection }).then((result) => {
       if (!active) return;
       setResponse(result);
       setLoading(false);
@@ -143,22 +538,22 @@ export function ClientsPage() {
       setLoading(false);
     });
     return () => { active = false; };
-  }, [mode, page, pageSize, query, repositorySet.clients, revision, sort, status]);
+  }, [mode, page, pageSize, query, repositorySet.clients, revision, sort, sortDirection, status]);
   const totalPages = Math.max(1, Math.ceil(response.total / pageSize));
   if (loading) return <LoadingState label="Loading client accounts" />;
   if (error) return <ErrorState title="Clients could not be loaded" description={error} />;
-  return <><PageHeader eyebrow="Customer relationships" title="Clients" description="A single view of customer accounts, open orders, and recent operational activity." actions={<Button onClick={() => setFormOpen(true)}><Plus size={15} /> New client</Button>} /><DemoNotice>Client records are mock data behind a repository contract. Contact values are illustrative.</DemoNotice><FilterBar resultLabel={`${response.items.length} shown · ${response.total} clients`}><SearchField placeholder="Search clients, account code, or contact" value={query} onChange={(value) => { setQuery(value); setPage(1); }} /><Select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} aria-label="Filter clients by status"><option value="all">All statuses</option><option value="Active">Active</option><option value="On hold">On hold</option><option value="Prospect">Prospect</option></Select><Select value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }} aria-label="Sort clients"><option value="name">Sort: name</option><option value="accountCode">Sort: account code</option><option value="status">Sort: status</option></Select><Select value={String(pageSize)} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }} aria-label="Clients per page"><option value="5">5 per page</option><option value="10">10 per page</option></Select><Button variant="ghost" onClick={() => { setQuery(''); setStatus('all'); setPage(1); }}><RotateCcw size={15} /> Clear filters</Button></FilterBar><Card><div className="section-heading"><div><span className="section-kicker">Account register</span><h2>Customer portfolio</h2></div><Badge tone="neutral">{mode === 'api' ? 'API data' : 'Read-only preview'}</Badge></div><DataTable caption="Customer account register" headers={['Account', 'Customer', 'Contact', 'Open orders', 'Last activity', 'Status', '']} rows={response.items.map((client) => [<Link className="table-link mono" to={detailPath(routes.clientDetail, client.id)}>{client.accountCode}</Link>, <div className="person-cell"><Avatar initials={initials(client.name)} /><span><strong>{client.name}</strong><small>{client.segment}</small></span></div>, <span>{client.contactName}<small className="table-sub">{client.phone}</small></span>, <span className="mono">{client.openOrders} / {client.orderCount}</span>, client.lastActivity, <StatusBadge status={client.status} />, <ActionMenu items={[{ label: 'Open profile', onClick: () => undefined }, { label: 'Export account', onClick: () => undefined, permission: 'action:export' }]} />])} empty={<EmptyState title="No clients found" description="Try adjusting the search or status filter." />} /></Card><Pagination page={Math.min(response.page, totalPages)} totalPages={totalPages} onChange={setPage} /><ClientFormDialog open={formOpen} onClose={() => setFormOpen(false)} onSaved={() => setRevision((value) => value + 1)} /></>;
+  return <><PageHeader eyebrow="Customer relationships" title="Clients" description="A single view of customer accounts, open orders, and recent operational activity." actions={<Button onClick={() => setFormOpen(true)}><Plus size={15} /> New client</Button>} />{mode === 'mock' && <DemoNotice>Client records are mock data behind a repository contract. Contact values are illustrative.</DemoNotice>}<FilterBar resultLabel={`${response.items.length} shown · ${response.total} clients`}><SearchField placeholder="Search clients, account code, or contact" value={query} onChange={(value) => { setQuery(value); setPage(1); }} /><Select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} aria-label="Filter clients by status"><option value="all">All statuses</option><option value="Active">Active</option><option value="On hold">On hold</option><option value="Prospect">Prospect</option></Select><Select value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }} aria-label="Sort clients"><option value="name">Sort: name</option><option value="accountCode">Sort: account code</option><option value="status">Sort: status</option></Select><Button variant="ghost" onClick={() => { setSortDirection((dir) => dir === 'asc' ? 'desc' : 'asc'); setPage(1); }} aria-label="Toggle sort direction" title={`Sort direction: ${sortDirection.toUpperCase()}`}>{sortDirection === 'asc' ? '↑ Asc' : '↓ Desc'}</Button><Select value={String(pageSize)} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }} aria-label="Clients per page"><option value="5">5 per page</option><option value="10">10 per page</option></Select><Button variant="ghost" onClick={() => { setQuery(''); setStatus('all'); setSortDirection('asc'); setPage(1); }}><RotateCcw size={15} /> Clear filters</Button></FilterBar><Card><div className="section-heading"><div><span className="section-kicker">Account register</span><h2>Customer portfolio</h2></div><Badge tone="neutral">{mode === 'api' ? 'API data' : 'Read-only preview'}</Badge></div><DataTable caption="Customer account register" headers={['Account', 'Customer', 'Contact', 'Open orders', 'Last activity', 'Status', '']} rows={response.items.map((client) => [<Link className="table-link mono" to={detailPath(routes.clientDetail, client.id)}>{client.accountCode}</Link>, <div className="person-cell"><Avatar initials={initials(client.name)} /><span><strong>{client.name}</strong><small>{client.segment}</small></span></div>, <span>{client.contactName}<small className="table-sub">{client.phone}</small></span>, <span className="mono">{client.openOrders} / {client.orderCount}</span>, client.lastActivity, <StatusBadge status={client.status} />, <ActionMenu items={[{ label: 'Open profile', onClick: () => undefined }, { label: 'Export account', permission: 'action:export' }]} />])} empty={<EmptyState title="No clients found" description="Try adjusting the search or status filter." />} /></Card><Pagination page={Math.min(response.page, totalPages)} totalPages={totalPages} onChange={setPage} /><ClientFormDialog open={formOpen} onClose={() => setFormOpen(false)} onSaved={() => setRevision((value) => value + 1)} /></>;
 }
 
 
 export function ClientDetailPage() {
   const { clientId } = useParams();
-  const { repositories: repositorySet } = useRepositories();
+  const { mode, repositories: repositorySet } = useRepositories();
   const [client, setClient] = useState<ClientRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState('Overview');
-  const [, setRevision] = useState(0);
+  const [revision, setRevision] = useState(0);
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -178,18 +573,19 @@ export function ClientDetailPage() {
       setLoading(false);
     });
     return () => { active = false; };
-  }, [clientId, repositorySet.clients]);
+  }, [clientId, repositorySet.clients, revision]);
   if (loading) return <LoadingState label="Loading client account" />;
   if (error) return <ErrorState title="Client could not be loaded" description={error} />;
   if (!client) return <DetailNotFound entity="Client" route={routes.clients} />;
-  return <><PageHeader breadcrumbs={['Clients', client.name]} eyebrow={client.accountCode} title={client.name} description={`${client.segment} · Account relationship and operational history`} actions={<><ClientEditAction client={client} onSaved={() => setRevision((value) => value + 1)} /><ActionMenu items={[{ label: 'Export account', onClick: () => undefined }, { label: 'Open audit history', onClick: () => undefined }]} /></>} /><DemoNotice>This client profile is rendered from mock repository data. No account mutation is connected.</DemoNotice><div className="detail-grid"><Card className="detail-summary"><div className="profile-heading"><Avatar initials={initials(client.name)} tone="green" /><div><h2>{client.name}</h2><span>{client.accountCode} · {client.status}</span></div><StatusBadge status={client.status} /></div><div className="detail-facts"><span><small>Primary contact</small><strong>{client.contactName}</strong></span><span><small>Phone</small><strong>{client.phone}</strong></span><span><small>Open orders</small><strong>{client.openOrders}</strong></span><span><small>Last activity</small><strong>{client.lastActivity}</strong></span></div></Card><Card><div className="section-heading"><div><span className="section-kicker">Account activity</span><h2>Latest signals</h2></div></div><div className="timeline"><TimelineItem title="Order RP-10482 moved to ready" meta="Today · 12 min ago" /><TimelineItem title="Inventory reserved for dispatch" meta="Today · 44 min ago" /><TimelineItem title="Client profile viewed" meta="Yesterday · Admin preview" /></div></Card></div><Card className="tab-card"><Tabs tabs={['Overview', 'Orders', 'Inventory relationship', 'Notes', 'Activity']} active={tab} onChange={setTab} />{tab === 'Overview' && <div className="detail-columns"><div><h3>Relationship overview</h3><p className="body-copy">Customer records will later connect to orders, inventory relationships, documents, and an immutable activity history.</p></div><div className="placeholder-lines"><span /><span /><span /></div></div>}{tab === 'Orders' && <DataTable headers={['Order', 'Material', 'Status', 'Due']} rows={ordersData.filter((order) => order.clientId === client.id).map((order) => [<Link className="table-link mono" to={detailPath(routes.orderDetail, order.id)}>{order.orderCode}</Link>, order.materialName, <StatusBadge status={order.status} />, order.dueAt])} />}{tab !== 'Overview' && tab !== 'Orders' && <EmptyState icon={Archive} title={`${tab} is reserved`} description="This surface is defined now so the future API can populate it without changing navigation." />}</Card></>;
+  return <><PageHeader breadcrumbs={['Clients', client.name]} eyebrow={client.accountCode} title={client.name} description={`${client.segment} · Account relationship and operational history`} actions={<><ClientEditAction client={client} onSaved={() => setRevision((value) => value + 1)} /><ActionMenu items={[{ label: 'Export account' }, { label: 'Open audit history' }]} /></>} />{mode === 'mock' && <DemoNotice>This client profile is rendered from mock repository data. No account mutation is connected.</DemoNotice>}<div className="detail-grid"><Card className="detail-summary"><div className="profile-heading"><Avatar initials={initials(client.name)} tone="green" /><div><h2>{client.name}</h2><span>{client.accountCode} · {client.status}</span></div><StatusBadge status={client.status} /></div><div className="detail-facts"><span><small>Primary contact</small><strong>{client.contactName}</strong></span><span><small>Phone</small><strong>{client.phone}</strong></span><span><small>Open orders</small><strong>{client.openOrders}</strong></span><span><small>Last activity</small><strong>{client.lastActivity}</strong></span></div></Card><Card><div className="section-heading"><div><span className="section-kicker">Account activity</span><h2>Latest signals</h2></div></div><div className="timeline"><TimelineItem title="Order RP-10482 moved to ready" meta="Today · 12 min ago" /><TimelineItem title="Inventory reserved for dispatch" meta="Today · 44 min ago" /><TimelineItem title="Client profile viewed" meta="Yesterday · Admin preview" /></div></Card></div><Card className="tab-card"><Tabs tabs={['Overview', 'Orders', 'Inventory relationship', 'Notes', 'Activity']} active={tab} onChange={setTab} />{tab === 'Overview' && <div className="detail-columns"><div><h3>Relationship overview</h3><p className="body-copy">Customer records will later connect to orders, inventory relationships, documents, and an immutable activity history.</p></div><div className="placeholder-lines"><span /><span /><span /></div></div>}{tab === 'Orders' && <DataTable headers={['Order', 'Material', 'Status', 'Due']} rows={ordersData.filter((order) => order.clientId === client.id).map((order) => [<Link className="table-link mono" to={detailPath(routes.orderDetail, order.id)}>{order.orderCode}</Link>, order.materialName, <StatusBadge status={order.status} />, order.dueAt])} />}{tab !== 'Overview' && tab !== 'Orders' && <EmptyState icon={Archive} title={`${tab} is reserved`} description="This surface is defined now so the future API can populate it without changing navigation." />}</Card></>;
 }
 
 function ClientEditAction({ client, onSaved }: { client: ClientRecord; onSaved: () => void }) { const [open, setOpen] = useState(false); return <><Button variant="secondary" onClick={() => setOpen(true)}><SlidersHorizontal size={15} /> Edit client</Button><ClientFormDialog open={open} clientId={client.id} clientName={client.name} onClose={() => setOpen(false)} onSaved={onSaved} /></>; }
 
 export function OrdersPage() {
   const [query, setQuery] = useState(''); const [status, setStatus] = useState('all'); const [priority, setPriority] = useState('all');
-  const [sort, setSort] = useState('orderCode'); const [page, setPage] = useState(1); const [pageSize, setPageSize] = useState(5);
+  const [sort, setSort] = useState('orderCode'); const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [page, setPage] = useState(1); const [pageSize, setPageSize] = useState(5);
   const [revision, setRevision] = useState(0);
   const [formOpen, setFormOpen] = useState(false);
   const { mode, repositories: repositorySet } = useRepositories();
@@ -200,7 +596,7 @@ export function OrdersPage() {
     let active = true;
     setLoading(true);
     setError(null);
-    void loadOrderList(repositorySet.orders, mode, { page, pageSize, search: query, status, priority, sort }).then((result) => {
+    void loadOrderList(repositorySet.orders, mode, { page, pageSize, search: query, status, priority, sort, sortDirection }).then((result) => {
       if (!active) return;
       setResponse(result);
       setLoading(false);
@@ -210,23 +606,104 @@ export function OrdersPage() {
       setLoading(false);
     });
     return () => { active = false; };
-  }, [mode, page, pageSize, priority, query, repositorySet.orders, revision, sort, status]);
+  }, [mode, page, pageSize, priority, query, repositorySet.orders, revision, sort, sortDirection, status]);
   const list = response.items;
   const filtered = Array.from({ length: response.total });
   const totalPages = Math.max(1, Math.ceil(response.total / pageSize));
   if (loading) return <LoadingState label="Loading orders" />;
   if (error) return <ErrorState title="Orders could not be loaded" description={error} />;
-  return <><PageHeader eyebrow="Customer commitments" title="Orders" description="Track order lifecycle, fulfilment progress, and service risk across the customer portfolio." actions={<Button onClick={() => setFormOpen(true)}><Plus size={15} /> New order</Button>} /><DemoNotice>Order transitions are represented visually only. No backend lifecycle mutation is connected.</DemoNotice><FilterBar resultLabel={`${list.length} shown · ${filtered.length} orders`}><SearchField placeholder="Search order number, customer, or material" value={query} onChange={(value) => { setQuery(value); setPage(1); }} /><Select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} aria-label="Filter orders by status"><option value="all">All statuses</option><option>Draft</option><option>Confirmed</option><option>In production</option><option>Partially fulfilled</option><option>Ready</option><option>Dispatched</option><option>Cancelled</option></Select><Select value={priority} onChange={(event) => { setPriority(event.target.value); setPage(1); }} aria-label="Filter orders by priority"><option value="all">All priorities</option><option>Urgent</option><option>High</option><option>Normal</option><option>Low</option></Select><Select value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }} aria-label="Sort orders"><option value="orderCode">Sort: order</option><option value="status">Sort: status</option><option value="priority">Sort: priority</option><option value="fulfillment">Sort: fulfilment</option></Select><Select value={String(pageSize)} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }} aria-label="Orders per page"><option value="5">5 per page</option><option value="10">10 per page</option></Select><Button variant="ghost" onClick={() => { setQuery(''); setStatus('all'); setPriority('all'); setPage(1); }}><RotateCcw size={15} /> Clear filters</Button></FilterBar><Card><div className="section-heading"><div><span className="section-kicker">Order register</span><h2>Active order lifecycle</h2></div><Button variant="secondary" disabled title="Export requires a backend report service"><Download size={15} /> Export unavailable</Button></div><DataTable caption="Order register" headers={['Order', 'Customer', 'Material', 'Status', 'Priority', 'Fulfilment', 'Due', 'SLA']} rows={list.map((order) => [<Link className="table-link mono" to={detailPath(routes.orderDetail, order.id)}>{order.orderCode}</Link>, order.clientName, order.materialName, <StatusBadge status={order.status} />, <Badge tone={priorityTone(order.priority)}>{order.priority}</Badge>, <span className="progress-cell"><span>{order.fulfillment}%</span><i><b style={{ width: `${order.fulfillment}%` }} /></i></span>, <span className="mono">{order.dueAt}</span>, <StatusBadge status={order.sla} />])} empty={<EmptyState title="No orders found" description="Try adjusting the order filters." />} /></Card><Pagination page={Math.min(page, totalPages)} totalPages={totalPages} onChange={setPage} /><OrderFormDialog open={formOpen} onClose={() => setFormOpen(false)} onSaved={() => setRevision((value) => value + 1)} /></>;
+  return <><PageHeader eyebrow="Customer commitments" title="Orders" description="Track order lifecycle, fulfilment progress, and service risk across the customer portfolio." actions={<Button onClick={() => setFormOpen(true)}><Plus size={15} /> New order</Button>} />{mode === 'mock' && <DemoNotice>Order transitions are represented visually only. No backend lifecycle mutation is connected.</DemoNotice>}<FilterBar resultLabel={`${list.length} shown · ${filtered.length} orders`}><SearchField placeholder="Search order number, customer, or material" value={query} onChange={(value) => { setQuery(value); setPage(1); }} /><Select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} aria-label="Filter orders by status"><option value="all">All statuses</option><option>Draft</option><option>Confirmed</option><option>In production</option><option>Partially fulfilled</option><option>Ready</option><option>Dispatched</option><option>Cancelled</option></Select><Select value={priority} onChange={(event) => { setPriority(event.target.value); setPage(1); }} aria-label="Filter orders by priority"><option value="all">All priorities</option><option>Urgent</option><option>High</option><option>Normal</option><option>Low</option></Select><Select value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }} aria-label="Sort orders"><option value="orderCode">Sort: order</option><option value="status">Sort: status</option><option value="priority">Sort: priority</option><option value="fulfillment">Sort: fulfilment</option></Select><Button variant="ghost" onClick={() => { setSortDirection((dir) => dir === 'asc' ? 'desc' : 'asc'); setPage(1); }} aria-label="Toggle sort direction" title={`Sort direction: ${sortDirection.toUpperCase()}`}>{sortDirection === 'asc' ? '↑ Asc' : '↓ Desc'}</Button><Select value={String(pageSize)} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }} aria-label="Orders per page"><option value="5">5 per page</option><option value="10">10 per page</option></Select><Button variant="ghost" onClick={() => { setQuery(''); setStatus('all'); setPriority('all'); setSortDirection('asc'); setPage(1); }}><RotateCcw size={15} /> Clear filters</Button></FilterBar><Card><div className="section-heading"><div><span className="section-kicker">Order register</span><h2>Active order lifecycle</h2></div><Badge tone="neutral">{mode === 'api' ? 'API data' : 'Read-only preview'}</Badge></div><DataTable caption="Order register" headers={['Order', 'Customer', 'Material', 'Status', 'Priority', 'Fulfilment', 'Due', 'SLA']} rows={list.map((order) => [<Link className="table-link mono" to={detailPath(routes.orderDetail, order.id)}>{order.orderCode}</Link>, order.clientName, order.materialName, <StatusBadge status={order.status} />, <Badge tone={priorityTone(order.priority)}>{order.priority}</Badge>, <span className="progress-cell"><span>{order.fulfillment}%</span><i><b style={{ width: `${order.fulfillment}%` }} /></i></span>, <span className="mono">{order.dueAt}</span>, <StatusBadge status={order.sla} />])} empty={<EmptyState title="No orders found" description="Try adjusting the order filters." />} /></Card><Pagination page={Math.min(page, totalPages)} totalPages={totalPages} onChange={setPage} /><OrderFormDialog open={formOpen} onClose={() => setFormOpen(false)} onSaved={() => setRevision((value) => value + 1)} /></>;
 }
 
+function OrderStatusAction({ order, onSaved }: { order: OrderRecord; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const { repositories: repositorySet } = useRepositories();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState<OrderRecord['status']>(order.status);
+
+  const getNextStatuses = (current: OrderRecord['status']): OrderRecord['status'][] => {
+    switch (current) {
+      case 'Draft': return ['Confirmed', 'Cancelled'];
+      case 'Confirmed': return ['In production', 'Cancelled'];
+      case 'In production': return ['Ready', 'Cancelled'];
+      case 'Ready': return ['Dispatched', 'Cancelled'];
+      case 'Dispatched': return ['Completed'];
+      default: return [];
+    }
+  };
+
+  const nextOptions = getNextStatuses(order.status);
+
+  useEffect(() => {
+    if (open) {
+      setError('');
+      setSelectedStatus(nextOptions[0] ?? order.status);
+    }
+  }, [open, order.status]);
+
+  const handleUpdate = async () => {
+    if (saving || selectedStatus === order.status) return;
+    setSaving(true);
+    setError('');
+    try {
+      await repositorySet.orders.update(order.id, { status: selectedStatus });
+      setOpen(false);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Status update failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (nextOptions.length === 0) {
+    return <Button variant="secondary" disabled><SlidersHorizontal size={15} /> Status: {order.status}</Button>;
+  }
+
+  return (
+    <>
+      <Button variant="secondary" onClick={() => setOpen(true)}>
+        <SlidersHorizontal size={15} /> Status: {order.status}
+      </Button>
+      <Dialog
+        open={open}
+        title="Update order status"
+        description={`Current status: ${order.status}. Transition to an authorized next status.`}
+        onClose={() => setOpen(false)}
+      >
+        <div className="form-grid">
+          <FormField label="Next status">
+            <Select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value as OrderRecord['status'])}
+            >
+              {nextOptions.map((st) => (
+                <option key={st} value={st}>{st}</option>
+              ))}
+            </Select>
+          </FormField>
+        </div>
+        {error && <Alert tone="error" title="Status update failed">{error}</Alert>}
+        <div className="dialog-actions">
+          <Button variant="secondary" type="button" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button type="button" loading={saving} onClick={handleUpdate}>
+            {saving ? 'Updating...' : `Transition to ${selectedStatus}`}
+          </Button>
+        </div>
+      </Dialog>
+    </>
+  );
+}
 
 export function OrderDetailPage() {
   const { orderId } = useParams();
-  const { repositories: repositorySet } = useRepositories();
+  const { mode, repositories: repositorySet } = useRepositories();
   const [order, setOrder] = useState<OrderRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState('Summary');
+  const [revision, setRevision] = useState(0);
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -246,13 +723,13 @@ export function OrderDetailPage() {
       setLoading(false);
     });
     return () => { active = false; };
-  }, [orderId, repositorySet.orders]);
+  }, [orderId, repositorySet.orders, revision]);
   if (loading) return <LoadingState label="Loading order" />;
   if (error) return <ErrorState title="Order could not be loaded" description={error} />;
   if (!order) return <DetailNotFound entity="Order" route={routes.orders} />;
   const items = order.items ?? [{ id: `${order.id}-item`, sku: 'SKU pending', materialName: order.materialName, quantity: order.quantity, unit: order.unit }];
   const activity = order.activity ?? [];
-  return <><PageHeader breadcrumbs={['Orders', order.orderCode]} eyebrow={`${order.priority} priority · ${order.sla}`} title={order.orderCode} description={`${order.clientName} · ${order.materialName}`} actions={<><MockAction label="Change status"><SlidersHorizontal size={15} /> Status</MockAction><ActionMenu items={[{ label: 'Duplicate order', onClick: () => undefined }, { label: 'Open audit history', onClick: () => undefined }, { label: 'Cancel preview order', onClick: () => undefined, danger: true }]} /></>} /><div className="status-rail"><span className="status-step step-done">Confirmed</span><ChevronRight size={15} /><span className="status-step step-done">In production</span><ChevronRight size={15} /><span className="status-step step-current">Ready</span><ChevronRight size={15} /><span className="status-step">Dispatched</span><ChevronRight size={15} /><span className="status-step">Completed</span></div><div className="detail-grid"><Card><div className="section-heading"><div><span className="section-kicker">Order summary</span><h2>Fulfilment overview</h2></div><StatusBadge status={order.status} /></div><div className="summary-number"><strong>{order.fulfillment}%</strong><span>fulfilled</span></div><div className="bar"><b style={{ width: `${order.fulfillment}%` }} /></div><div className="detail-facts"><span><small>Quantity</small><strong>{order.quantity} {order.unit}</strong></span><span><small>Due</small><strong>{order.dueAt}</strong></span><span><small>Customer</small><strong>{order.clientName}</strong></span><span><small>SLA</small><strong>{order.sla}</strong></span></div></Card><Card><div className="section-heading"><div><span className="section-kicker">Line items</span><h2>Material specification</h2></div><Badge tone="neutral">{items.length} items</Badge></div><DataTable caption="Order line items" headers={['SKU', 'Material', 'Quantity', 'Unit']} rows={items.map((item) => [<span className="mono">{item.sku}</span>, item.materialName, <span className="mono">{item.quantity}</span>, item.unit])} /></Card></div><Card className="tab-card"><Tabs tabs={['Summary', 'Line items', 'Inventory relationship', 'Tasks', 'Activity']} active={tab} onChange={setTab} />{tab === 'Summary' && <div className="detail-columns"><div><h3>Customer commitment</h3><p className="body-copy">This order is connected to customer, inventory, warehouse task, and audit preview relationships.</p></div><div className="timeline compact">{activity.slice(0, 3).map((event) => <TimelineItem key={event.id} title={event.action} meta={`${event.actor} · ${event.timestamp}`} tone={event.status} />)}</div></div>}{tab === 'Line items' && <DataTable caption="Order line items" headers={['SKU', 'Material', 'Quantity', 'Unit']} rows={items.map((item) => [<span className="mono">{item.sku}</span>, item.materialName, <span className="mono">{item.quantity}</span>, item.unit])} />}{tab === 'Activity' && <div className="timeline">{activity.map((event) => <TimelineItem key={event.id} title={event.action} meta={`${event.actor} · ${event.timestamp}`} tone={event.status} />)}</div>}{tab !== 'Summary' && tab !== 'Line items' && tab !== 'Activity' && <EmptyState icon={ClipboardCheck} title={`${tab} is reserved`} description="The relationship surface is ready for a future inventory, task, or audit repository." />}</Card></>;
+  return <><PageHeader breadcrumbs={['Orders', order.orderCode]} eyebrow={`${order.priority} priority · ${order.sla}`} title={order.orderCode} description={`${order.clientName} · ${order.materialName}`} actions={<><OrderStatusAction order={order} onSaved={() => setRevision((v) => v + 1)} /><ActionMenu items={[{ label: 'Duplicate order' }, { label: 'Open audit history' }]} /></>} />{mode === 'mock' && <DemoNotice>This order profile is rendered from mock repository data. No order mutation is connected.</DemoNotice>}<div className="status-rail"><span className={`status-step ${order.status === 'Draft' ? 'step-current' : 'step-done'}`}>Draft</span><ChevronRight size={15} /><span className={`status-step ${order.status === 'Confirmed' ? 'step-current' : order.status !== 'Draft' ? 'step-done' : ''}`}>Confirmed</span><ChevronRight size={15} /><span className={`status-step ${order.status === 'In production' ? 'step-current' : ['Ready', 'Dispatched', 'Completed'].includes(order.status) ? 'step-done' : ''}`}>In production</span><ChevronRight size={15} /><span className={`status-step ${order.status === 'Ready' ? 'step-current' : ['Dispatched', 'Completed'].includes(order.status) ? 'step-done' : ''}`}>Ready</span><ChevronRight size={15} /><span className={`status-step ${order.status === 'Dispatched' ? 'step-current' : order.status === 'Completed' ? 'step-done' : ''}`}>Dispatched</span><ChevronRight size={15} /><span className={`status-step ${order.status === 'Completed' ? 'step-current step-done' : ''}`}>Completed</span></div><div className="detail-grid"><Card><div className="section-heading"><div><span className="section-kicker">Order summary</span><h2>Fulfilment overview</h2></div><StatusBadge status={order.status} /></div><div className="summary-number"><strong>{order.fulfillment}%</strong><span>fulfilled</span></div><div className="bar"><b style={{ width: `${order.fulfillment}%` }} /></div><div className="detail-facts"><span><small>Quantity</small><strong>{order.quantity} {order.unit}</strong></span><span><small>Due</small><strong>{order.dueAt}</strong></span><span><small>Customer</small><strong>{order.clientName}</strong></span><span><small>SLA</small><strong>{order.sla}</strong></span></div></Card><Card><div className="section-heading"><div><span className="section-kicker">Line items</span><h2>Material specification</h2></div><Badge tone="neutral">{items.length} items</Badge></div><DataTable caption="Order line items" headers={['SKU', 'Material', 'Quantity', 'Unit']} rows={items.map((item) => [<span className="mono">{item.sku}</span>, item.materialName, <span className="mono">{item.quantity}</span>, item.unit])} /></Card></div><Card className="tab-card"><Tabs tabs={['Summary', 'Line items', 'Inventory relationship', 'Tasks', 'Activity']} active={tab} onChange={setTab} />{tab === 'Summary' && <div className="detail-columns"><div><h3>Customer commitment</h3><p className="body-copy">This order is connected to customer, inventory, warehouse task, and audit preview relationships.</p></div><div className="timeline compact">{activity.slice(0, 3).map((event) => <TimelineItem key={event.id} title={event.action} meta={`${event.actor} · ${event.timestamp}`} tone={event.status} />)}</div></div>}{tab === 'Line items' && <DataTable caption="Order line items" headers={['SKU', 'Material', 'Quantity', 'Unit']} rows={items.map((item) => [<span className="mono">{item.sku}</span>, item.materialName, <span className="mono">{item.quantity}</span>, item.unit])} />}{tab === 'Activity' && <div className="timeline">{activity.map((event) => <TimelineItem key={event.id} title={event.action} meta={`${event.actor} · ${event.timestamp}`} tone={event.status} />)}</div>}{tab !== 'Summary' && tab !== 'Line items' && tab !== 'Activity' && <EmptyState icon={ClipboardCheck} title={`${tab} is reserved`} description="The relationship surface is ready for a future inventory, task, or audit repository." />}</Card></>;
 }
 
 
@@ -393,6 +870,7 @@ export function AccessControlPage() { const [tab, setTab] = useState('Roles'); c
 
 export function AuthPage({ mode }: { mode: 'login' | 'register' }) {
   const isLogin = mode === 'login';
+  const { mode: dataMode } = useRepositories();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -418,7 +896,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }) {
     const nextPath = intendedPath && canAccessRouteForSession(result.session, permissionForPath(intendedPath)) ? intendedPath : defaultDashboardPath(result.session?.role ?? session?.role);
     navigate(nextPath, { replace: true });
   };
-  return <div className="auth-page"><div className="auth-brand"><div className="brand-mark">RP</div><div><strong>Royal Packaging</strong><span>Operations console</span></div></div><Card className="auth-card"><div className="eyebrow">Frontend session preview</div><h1>{isLogin ? 'Sign in to your workspace' : 'Create a workspace account'}</h1><p className="auth-copy">Use a work email and password to enter the local preview. No credentials leave the browser.</p>{error && <Alert tone="error" title="Sign-in needs attention">{error}</Alert>}<form onSubmit={submit} noValidate aria-busy={submitting}><FormField label="Work email" error={submitted && !email ? 'Email is required.' : undefined}><Input id="login-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@royalpackaging.com" autoComplete="email" aria-invalid={submitted && !email || undefined} required /></FormField>{!isLogin && <FormField label="Display name"><Input placeholder="Your name" autoComplete="name" /></FormField>}<FormField label="Password" error={submitted && !password ? 'Password is required.' : undefined}><div className="password-field"><Input id="login-password" type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="8+ characters" autoComplete={isLogin ? 'current-password' : 'new-password'} aria-invalid={submitted && !password || undefined} required /><IconButton type="button" label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</IconButton></div></FormField><Button type="submit" loading={submitting || status === 'LOGGING_IN'} className="full-width" disabled={submitting}><LockKeyhole size={16} /> {submitting ? 'Signing in' : isLogin ? 'Sign in' : 'Create preview session'}</Button></form><div className="auth-links"><Link to={routes.forgotPassword}>Forgot password?</Link><Link to={isLogin ? routes.register : routes.login}>{isLogin ? 'Register instead' : 'Back to sign in'}</Link></div><div className="auth-note"><ShieldCheck size={16} /><span>Frontend UX only. The backend will own authentication and session enforcement.</span></div></Card></div>;
+  return <div className="auth-page"><div className="auth-brand"><div className="brand-mark">RP</div><div><strong>Royal Packaging</strong><span>Operations console</span></div></div><Card className="auth-card"><div className="eyebrow">{dataMode === 'api' ? 'Operations Console' : 'Frontend session preview'}</div><h1>{isLogin ? 'Sign in to your workspace' : 'Create a workspace account'}</h1><p className="auth-copy">{dataMode === 'api' ? 'Sign in with your authorized work email and password to access the Royal Packaging workspace.' : 'Use a work email and password to enter the local preview. No credentials leave the browser.'}</p>{error && <Alert tone="error" title="Sign-in needs attention">{error}</Alert>}<form onSubmit={submit} noValidate aria-busy={submitting}><FormField label="Work email" error={submitted && !email ? 'Email is required.' : undefined}><Input id="login-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@royalpackaging.com" autoComplete="email" aria-invalid={submitted && !email || undefined} required /></FormField>{!isLogin && <FormField label="Display name"><Input placeholder="Your name" autoComplete="name" /></FormField>}<FormField label="Password" error={submitted && !password ? 'Password is required.' : undefined}><div className="password-field"><Input id="login-password" type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="8+ characters" autoComplete={isLogin ? 'current-password' : 'new-password'} aria-invalid={submitted && !password || undefined} required /><IconButton type="button" label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</IconButton></div></FormField><Button type="submit" loading={submitting || status === 'LOGGING_IN'} className="full-width" disabled={submitting}><LockKeyhole size={16} /> {submitting ? 'Signing in' : isLogin ? 'Sign in' : 'Create account'}</Button></form><div className="auth-links"><Link to={routes.forgotPassword}>Forgot password?</Link><Link to={isLogin ? routes.register : routes.login}>{isLogin ? 'Register instead' : 'Back to sign in'}</Link></div><div className="auth-note"><ShieldCheck size={16} /><span>{dataMode === 'api' ? 'Secure enterprise authentication. Sessions are verified via HTTP-only cookie.' : 'Frontend UX only. The backend will own authentication and session enforcement.'}</span></div></Card></div>;
 }
 
 export function ForgotPasswordPage() { return <AuthSupportPage title="Reset your password" description="Enter your work email to preview the reset request state. No message will be sent." button="Request reset" />; }

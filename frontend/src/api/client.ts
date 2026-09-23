@@ -1,6 +1,29 @@
 import { apiErrorBodySchema, type ApiErrorBody } from './contracts';
 
-const apiBaseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000/api';
+export function resolveApiBaseUrl(
+  rawUrl: unknown = import.meta.env.VITE_API_URL,
+  isProd: boolean = Boolean(import.meta.env.PROD)
+): string {
+  const trimmed = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+
+  if (isProd) {
+    if (!trimmed) {
+      throw new Error(
+        'Production configuration error: VITE_API_URL must be explicitly configured in production.'
+      );
+    }
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(trimmed)) {
+      throw new Error(
+        'Production configuration error: VITE_API_URL cannot point to localhost in production.'
+      );
+    }
+    return trimmed;
+  }
+
+  return trimmed || 'http://localhost:3000/api';
+}
+
+const apiBaseUrl = resolveApiBaseUrl();
 const relativePath = /^\/[A-Za-z0-9_./?&=%:+-]*$/;
 
 export const apiErrorSchema = apiErrorBodySchema;
@@ -31,7 +54,12 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   });
   if (!response.ok) {
     let payload: ApiErrorPayload | undefined;
-    try { payload = apiErrorSchema.parse(await response.json()); } catch { payload = undefined; }
+    try {
+      const json = await response.json();
+      payload = apiErrorSchema.parse(json);
+      if (!payload.code && json?.error?.code) payload.code = json.error.code;
+      if (!payload.message && json?.error?.message) payload.message = json.error.message;
+    } catch { payload = undefined; }
     throw new ApiError(response.status, payload);
   }
   if (response.status === 204) return undefined as T;

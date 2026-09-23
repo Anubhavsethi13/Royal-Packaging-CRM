@@ -22,5 +22,28 @@ describe('frontend authorization model', () => {
     expect(hasPermission({ role: 'SUPER_ADMIN', permissions: rolePermissions('SUPER_ADMIN') }, { module: 'SETTINGS', action: 'VIEW' })).toBe(true);
     expect(hasPermission({ role: 'SUPER_ADMIN', permissions: rolePermissions('SUPER_ADMIN') }, { module: 'PAYROLL', action: 'APPROVE' })).toBe(true);
   });
+
+  it('maps backend database permissions to frontend module requirements', () => {
+    const backendAdmin = {
+      role: 'ADMIN' as const,
+      roles: ['ADMIN' as const],
+      permissions: ['client:read', 'client:write', 'order:read', 'order:write', 'order:cancel', 'dashboard:read'],
+    };
+    expect(hasPermission(backendAdmin, { module: 'CLIENTS', action: 'VIEW' })).toBe(true);
+    expect(hasPermission(backendAdmin, { module: 'CLIENTS', action: 'CREATE' })).toBe(true);
+    expect(hasPermission(backendAdmin, { module: 'ORDERS', action: 'VIEW' })).toBe(true);
+    expect(hasPermission(backendAdmin, { module: 'ORDERS', action: 'CANCEL' })).toBe(true);
+    expect(hasPermission(backendAdmin, { module: 'DASHBOARD', action: 'VIEW' })).toBe(true);
+    expect(hasPermission(backendAdmin, { module: 'PAYROLL', action: 'APPROVE' })).toBe(false);
+
+    const backendEmployee = {
+      role: 'EMPLOYEE' as const,
+      roles: ['EMPLOYEE' as const],
+      permissions: ['client:read', 'order:read', 'dashboard:read'],
+    };
+    expect(hasPermission(backendEmployee, { module: 'CLIENTS', action: 'VIEW' })).toBe(true);
+    expect(hasPermission(backendEmployee, { module: 'CLIENTS', action: 'CREATE' })).toBe(false);
+    expect(hasPermission(backendEmployee, { module: 'ORDERS', action: 'CANCEL' })).toBe(false);
+  });
 });
 

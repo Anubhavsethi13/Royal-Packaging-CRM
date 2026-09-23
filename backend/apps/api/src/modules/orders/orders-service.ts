@@ -48,36 +48,51 @@ export class OrdersService {
 
     const now = new Date();
     const id = crypto.randomUUID();
+    const explicitCode = parsed.data.order_code?.trim();
 
-    try {
-      await this.database
-        .insertInto("orders")
-        .values({
-          id,
-          client_id: parsed.data.client_id,
-          order_code: parsed.data.order_code,
-          material_name: parsed.data.material_name ?? null,
-          quantity: parsed.data.quantity !== undefined ? String(parsed.data.quantity) : null,
-          unit: parsed.data.unit ?? null,
-          status: "draft",
-          priority: parsed.data.priority ?? "normal",
-          due_at: parsed.data.due_at ?? null,
-          notes: parsed.data.notes ?? null,
-          cancelled_at: null,
-          cancellation_reason: null,
-          created_at: now,
-          updated_at: now,
-          version: "1"
-        })
-        .execute();
-    } catch (err) {
-      if (isPostgresUniqueViolation(err)) {
-        throw new CommercialDomainError(
-          "DUPLICATE_ORDER_CODE",
-          `order_code '${parsed.data.order_code}' is already in use.`
-        );
+    let attempts = 0;
+    while (attempts < 5) {
+      attempts++;
+      const orderCode = explicitCode || `ORD-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+
+      try {
+        await this.database
+          .insertInto("orders")
+          .values({
+            id,
+            client_id: parsed.data.client_id,
+            order_code: orderCode,
+            material_name: parsed.data.material_name ?? null,
+            quantity: parsed.data.quantity !== undefined ? String(parsed.data.quantity) : null,
+            unit: parsed.data.unit ?? null,
+            status: "draft",
+            priority: parsed.data.priority ?? "normal",
+            due_at: parsed.data.due_at ?? null,
+            notes: parsed.data.notes ?? null,
+            cancelled_at: null,
+            cancellation_reason: null,
+            created_at: now,
+            updated_at: now,
+            version: "1"
+          })
+          .execute();
+        break;
+      } catch (err) {
+        if (isPostgresUniqueViolation(err)) {
+          if (explicitCode) {
+            throw new CommercialDomainError(
+              "DUPLICATE_ORDER_CODE",
+              `order_code '${explicitCode}' is already in use.`
+            );
+          }
+          // Generated code collided - loop to retry with new random bytes
+          if (attempts >= 5) {
+            throw new CommercialDomainError("DUPLICATE_ORDER_CODE", "Failed to generate unique order code after retries.");
+          }
+          continue;
+        }
+        throw err;
       }
-      throw err;
     }
 
     return this.getOrderByIdOrThrow(id);

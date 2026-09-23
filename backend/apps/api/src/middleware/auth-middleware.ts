@@ -147,7 +147,7 @@ export class DatabaseRBACAuthorizationPolicy implements AuthorizationPolicy {
     const isSuperAdmin = roles.includes("SUPER_ADMIN");
     const isMainAdmin = roles.includes("MAIN_ADMIN");
     const isAdmin = roles.includes("ADMIN");
-    const isManager = roles.includes("MANAGER");
+    const isManager = roles.includes("MANAGER") || roles.includes("SUPERVISOR");
     const isEmployee = roles.includes("EMPLOYEE");
 
     const isApprovedRole = isSuperAdmin || isMainAdmin || isAdmin || isManager || isEmployee;

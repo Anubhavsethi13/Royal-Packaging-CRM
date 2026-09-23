@@ -109,7 +109,7 @@ export function isOrderCancellable(status: OrderStatus): boolean {
 
 export const createOrderRequestSchema = z.object({
   client_id: z.string().uuid({ message: "client_id must be a valid UUID" }),
-  order_code: z.string().trim().min(1, { message: "order_code is required" }),
+  order_code: z.string().trim().min(1).optional(),
   material_name: z.string().trim().min(1).optional(),
   quantity: z.union([
     z.bigint().nonnegative(),

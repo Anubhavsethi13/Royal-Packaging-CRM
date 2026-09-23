@@ -51,12 +51,59 @@ export function hasAnyRole(subject: AuthorizationSubject | null | undefined, rol
   return roles.some((role) => hasRole(subject, role));
 }
 
+const backendPermissionMap: Record<string, string[]> = {
+  'DASHBOARD:VIEW': ['dashboard:read'],
+  'CLIENTS:VIEW': ['client:read'],
+  'CLIENTS:CREATE': ['client:write'],
+  'CLIENTS:EDIT': ['client:write'],
+  'CLIENTS:DELETE': ['client:write'],
+  'ORDERS:VIEW': ['order:read'],
+  'ORDERS:CREATE': ['order:write'],
+  'ORDERS:EDIT': ['order:write'],
+  'ORDERS:CANCEL': ['order:cancel'],
+  'INVENTORY:VIEW': ['inventory:read_catalog', 'inventory:read_balances', 'inventory:read_movement'],
+  'TASKS:VIEW': ['task:read', 'task:read_summary'],
+  'TASKS:ASSIGN': ['task:assign'],
+  'TASKS:START': ['task:start'],
+  'TASKS:PAUSE': ['task:pause'],
+  'TASKS:RESUME': ['task:resume'],
+  'TASKS:COMPLETE': ['task:complete'],
+  'TASKS:CANCEL': ['task:cancel'],
+  'TASKS:VERIFY': ['task:verify', 'quality:inspect'],
+  'WAREHOUSE:VIEW': ['warehouse:read_tasks', 'warehouse:read_route', 'warehouse:scan'],
+  'LOCATIONS:VIEW': ['warehouse:read_tasks', 'warehouse:read_route'],
+  'LOADING_UNLOADING:VIEW': ['warehouse:read_tasks', 'task:execute_movement'],
+  'EMPLOYEES:VIEW': ['employee:read'],
+  'EMPLOYEES:CREATE': ['employee:write'],
+  'EMPLOYEES:EDIT': ['employee:write'],
+  'KPI:VIEW': ['kpi:read'],
+  'KPI:EDIT': ['kpi:write'],
+  'KPI:VERIFY': ['kpi:verify'],
+  'INCENTIVES:VIEW': ['incentive:read'],
+  'INCENTIVES:APPROVE': ['incentive:approve'],
+  'PAYROLL:VIEW': ['payroll:read'],
+  'PAYROLL:APPROVE': ['payroll:approve'],
+  'REPORTS:VIEW': ['report:read'],
+  'REPORTS:EXPORT': ['report:execute'],
+  'AUDIT:VIEW': ['audit:read'],
+  'ACCESS_CONTROL:VIEW': ['audit:read', 'settings:read'],
+  'SETTINGS:VIEW': ['settings:read', 'audit:read'],
+};
+
 export function hasPermission(subject: AuthorizationSubject | null | undefined, requirement: PermissionRequirement): boolean {
   if (!subject) return false;
+  if (hasRole(subject, 'SUPER_ADMIN')) return true;
   const permissions = subject.permissions ?? [];
   if (permissions.includes('*')) return true;
-  if (permissions.includes(requirementKey(requirement))) return true;
+  const key = requirementKey(requirement);
+  if (permissions.includes(key)) return true;
   if (typeof requirement === 'string') return permissions.includes(requirement);
+
+  const backendEquivalents = backendPermissionMap[key];
+  if (backendEquivalents && backendEquivalents.some((perm) => permissions.includes(perm))) {
+    return true;
+  }
+
   if (permissions.some((permission) => /^[A-Z_]+:(VIEW|CREATE|EDIT|DELETE|ASSIGN|ACCEPT|APPROVE|REJECT|EXPORT|START|PAUSE|RESUME|COMPLETE|REOPEN|CANCEL|VERIFY)$/.test(permission))) return false;
   return permissions.includes(legacyPermission(requirement.module, requirement.action));
 }

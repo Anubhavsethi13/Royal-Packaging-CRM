@@ -95,6 +95,7 @@ export const ROLE_AUTHORITY_PRECEDENCE = [
   "MAIN_ADMIN",
   "ADMIN",
   "MANAGER",
+  "SUPERVISOR",
   "EMPLOYEE"
 ] as const;
 
