@@ -12,94 +12,79 @@ import type { RoyalPackagingDatabase } from "../src/types.js";
  */
 export async function up(database: Kysely<RoyalPackagingDatabase>): Promise<void> {
   // --- clients -------------------------------------------------------
-  await database.schema
-    .alterTable("clients")
-    .addColumn("account_code", "text")
-    .addColumn("contact_name", "text")
-    .addColumn("phone", "text")
-    .addColumn("status", "text", (column) => column.notNull().defaultTo("active"))
-    .execute();
+  await sql`
+    ALTER TABLE clients
+      ADD COLUMN IF NOT EXISTS account_code text,
+      ADD COLUMN IF NOT EXISTS contact_name text,
+      ADD COLUMN IF NOT EXISTS phone text,
+      ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active';
+  `.execute(database);
 
   await sql`UPDATE clients SET account_code = 'CL-' || substr(id::text, 1, 8) WHERE account_code IS NULL`.execute(
     database
   );
 
-  await database.schema
-    .alterTable("clients")
-    .alterColumn("account_code", (column) => column.setNotNull())
-    .execute();
+  await sql`ALTER TABLE clients ALTER COLUMN account_code SET NOT NULL`.execute(database);
 
-  await database.schema
-    .createIndex("clients_account_code_unique_index")
-    .on("clients")
-    .column("account_code")
-    .unique()
-    .execute();
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS clients_account_code_unique_index ON clients (account_code)`.execute(
+    database
+  );
 
   // --- orders ----------------------------------------------------------
-  await database.schema
-    .alterTable("orders")
-    .addColumn("order_code", "text")
-    .addColumn("material_name", "text")
-    .addColumn("quantity", "bigint")
-    .addColumn("unit", "text")
-    .addColumn("status", "text", (column) => column.notNull().defaultTo("draft"))
-    .addColumn("priority", "text", (column) => column.notNull().defaultTo("normal"))
-    .addColumn("due_at", "timestamptz")
-    .addColumn("notes", "text")
-    .addColumn("cancelled_at", "timestamptz")
-    .addColumn("cancellation_reason", "text")
-    .execute();
+  await sql`
+    ALTER TABLE orders
+      ADD COLUMN IF NOT EXISTS order_code text,
+      ADD COLUMN IF NOT EXISTS material_name text,
+      ADD COLUMN IF NOT EXISTS quantity bigint,
+      ADD COLUMN IF NOT EXISTS unit text,
+      ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'draft',
+      ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal',
+      ADD COLUMN IF NOT EXISTS due_at timestamptz,
+      ADD COLUMN IF NOT EXISTS notes text,
+      ADD COLUMN IF NOT EXISTS cancelled_at timestamptz,
+      ADD COLUMN IF NOT EXISTS cancellation_reason text;
+  `.execute(database);
 
   await sql`UPDATE orders SET order_code = 'ORD-' || substr(id::text, 1, 8) WHERE order_code IS NULL`.execute(
     database
   );
 
-  await database.schema
-    .alterTable("orders")
-    .alterColumn("order_code", (column) => column.setNotNull())
-    .execute();
+  await sql`ALTER TABLE orders ALTER COLUMN order_code SET NOT NULL`.execute(database);
 
-  await database.schema
-    .createIndex("orders_order_code_unique_index")
-    .on("orders")
-    .column("order_code")
-    .unique()
-    .execute();
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS orders_order_code_unique_index ON orders (order_code)`.execute(
+    database
+  );
 
-  await database.schema
-    .alterTable("orders")
-    .addCheckConstraint("orders_quantity_non_negative", sql`quantity IS NULL OR quantity >= 0`)
-    .execute();
+  await sql`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'orders_quantity_non_negative') THEN
+        ALTER TABLE orders ADD CONSTRAINT orders_quantity_non_negative CHECK (quantity IS NULL OR quantity >= 0);
+      END IF;
+    END $$;
+  `.execute(database);
 
-  await database.schema.createIndex("orders_status_index").on("orders").column("status").execute();
+  await sql`CREATE INDEX IF NOT EXISTS orders_status_index ON orders (status)`.execute(database);
 
   // --- employees ---------------------------------------------------------
-  await database.schema
-    .alterTable("employees")
-    .addColumn("employee_code", "text")
-    .addColumn("name", "text")
-    .addColumn("department", "text")
-    .addColumn("depot_id", "uuid", (column) => column.references("depots.id").onDelete("set null"))
-    .execute();
+  await sql`
+    ALTER TABLE employees
+      ADD COLUMN IF NOT EXISTS employee_code text,
+      ADD COLUMN IF NOT EXISTS name text,
+      ADD COLUMN IF NOT EXISTS department text,
+      ADD COLUMN IF NOT EXISTS depot_id uuid REFERENCES depots(id) ON DELETE SET NULL;
+  `.execute(database);
 
   await sql`UPDATE employees SET employee_code = 'EMP-' || substr(id::text, 1, 8) WHERE employee_code IS NULL`.execute(
     database
   );
 
-  await database.schema
-    .alterTable("employees")
-    .alterColumn("employee_code", (column) => column.setNotNull())
-    .execute();
+  await sql`ALTER TABLE employees ALTER COLUMN employee_code SET NOT NULL`.execute(database);
 
-  await database.schema
-    .createIndex("employees_employee_code_unique_index")
-    .on("employees")
-    .column("employee_code")
-    .unique()
-    .execute();
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS employees_employee_code_unique_index ON employees (employee_code)`.execute(
+    database
+  );
 
-  await database.schema.createIndex("employees_depot_id_index").on("employees").column("depot_id").execute();
+  await sql`CREATE INDEX IF NOT EXISTS employees_depot_id_index ON employees (depot_id)`.execute(database);
 }
 
 export async function down(database: Kysely<RoyalPackagingDatabase>): Promise<void> {

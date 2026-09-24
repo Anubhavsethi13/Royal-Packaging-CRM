@@ -209,7 +209,13 @@ export async function seedDatabase(): Promise<void> {
         existingUser = { id: userId, login_identifier: u.email };
         console.log(`[SEED] Created account: ${u.email}`);
       } else {
-        console.log(`[SEED] Account already exists: ${u.email}`);
+        const passwordHash = await hashPassword(u.password);
+        await database
+          .updateTable("users")
+          .set({ password_hash: passwordHash, is_active: true })
+          .where("id", "=", existingUser.id)
+          .execute();
+        console.log(`[SEED] Account already exists, refreshed credentials: ${u.email}`);
       }
 
       userMap.set(u.email, { id: existingUser.id, roles: u.roles });
@@ -244,28 +250,28 @@ export async function seedDatabase(): Promise<void> {
     }
 
     // 3. Ensure permissions exist in `access_permissions`
-    const permissionIdMap = new Map<string, string>();
-    for (const p of PERMISSIONS) {
-      let perm = await database
-        .selectFrom("access_permissions")
-        .select("id")
-        .where("code", "=", p.code)
-        .executeTakeFirst();
+    const existingPerms = await database
+      .selectFrom("access_permissions")
+      .select(["id", "code"])
+      .execute();
+    const permissionIdMap = new Map<string, string>(existingPerms.map((p) => [p.code, p.id]));
 
-      if (!perm) {
-        const id = crypto.randomUUID();
-        await database
-          .insertInto("access_permissions")
-          .values({
-            id,
-            code: p.code,
-            name: p.name,
-            description: p.description ?? null
-          })
-          .execute();
-        perm = { id };
+    const permsToInsert = PERMISSIONS.filter((p) => !permissionIdMap.has(p.code)).map((p) => {
+      const id = crypto.randomUUID();
+      permissionIdMap.set(p.code, id);
+      return {
+        id,
+        code: p.code,
+        name: p.name,
+        description: p.description ?? null
+      };
+    });
+
+    if (permsToInsert.length > 0) {
+      for (let i = 0; i < permsToInsert.length; i += 50) {
+        const chunk = permsToInsert.slice(i, i + 50);
+        await database.insertInto("access_permissions").values(chunk).execute();
       }
-      permissionIdMap.set(p.code, perm.id);
     }
     console.log(`[SEED] Ensured ${PERMISSIONS.length} access permissions exist.`);
 
@@ -279,7 +285,17 @@ export async function seedDatabase(): Promise<void> {
       { roleCode: "AUDITOR", permissions: AUDITOR_PERMISSIONS }
     ];
 
+    const existingRolePermissions = await database
+      .selectFrom("access_role_permissions")
+      .select(["role_id", "permission_id"])
+      .execute();
+    const existingBindingSet = new Set(
+      existingRolePermissions.map((b) => `${b.role_id}:${b.permission_id}`)
+    );
+
+    const bindingsToInsert: Array<{ role_id: string; permission_id: string; created_by_user_id: string }> = [];
     let newBindingsCount = 0;
+
     for (const binding of roleBindings) {
       const roleId = roleIdMap.get(binding.roleCode);
       if (!roleId) continue;
@@ -288,24 +304,22 @@ export async function seedDatabase(): Promise<void> {
         const permId = permissionIdMap.get(permCode);
         if (!permId) continue;
 
-        const existingBinding = await database
-          .selectFrom("access_role_permissions")
-          .select("role_id")
-          .where("role_id", "=", roleId)
-          .where("permission_id", "=", permId)
-          .executeTakeFirst();
-
-        if (!existingBinding) {
-          await database
-            .insertInto("access_role_permissions")
-            .values({
-              role_id: roleId,
-              permission_id: permId,
-              created_by_user_id: creatorId
-            })
-            .execute();
+        if (!existingBindingSet.has(`${roleId}:${permId}`)) {
+          bindingsToInsert.push({
+            role_id: roleId,
+            permission_id: permId,
+            created_by_user_id: creatorId
+          });
+          existingBindingSet.add(`${roleId}:${permId}`);
           newBindingsCount++;
         }
+      }
+    }
+
+    if (bindingsToInsert.length > 0) {
+      for (let i = 0; i < bindingsToInsert.length; i += 50) {
+        const chunk = bindingsToInsert.slice(i, i + 50);
+        await database.insertInto("access_role_permissions").values(chunk).execute();
       }
     }
     console.log(`[SEED] Role-permission mappings up to date (${newBindingsCount} new bindings added).`);

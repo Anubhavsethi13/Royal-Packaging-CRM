@@ -2,6 +2,8 @@ import type { ApplicationConfig } from "@royal-packaging/config";
 import { loadConfig } from "@royal-packaging/config";
 import type { Transaction } from "kysely";
 import { Kysely, PostgresDialect, sql } from "kysely";
+import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
+import ws from "ws";
 import { Pool } from "pg";
 
 import type { RoyalPackagingDatabase } from "./types.js";
@@ -24,17 +26,20 @@ export function createPostgresPool(connectionString: string): Pool {
   try {
     const url = new URL(connectionString);
     const isLocalhost = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    const isNeon = url.hostname.endsWith(".neon.tech");
+
+    if (isNeon) {
+      neonConfig.webSocketConstructor = ws;
+      const directUrl = connectionString.replace("-pooler.", ".");
+      return new NeonPool({ connectionString: directUrl }) as unknown as Pool;
+    }
+
     const sslParam = url.searchParams.get("sslmode");
 
     if (!isLocalhost && sslParam !== "disable") {
       return new Pool({
-        host: url.hostname,
-        port: url.port ? parseInt(url.port, 10) : 5432,
-        user: url.username ? decodeURIComponent(url.username) : undefined,
-        password: url.password ? decodeURIComponent(url.password) : undefined,
-        database: url.pathname ? url.pathname.replace(/^\//, "") : undefined,
-        ssl: { rejectUnauthorized: false },
-        sslnegotiation: "direct"
+        connectionString,
+        ssl: { rejectUnauthorized: false }
       });
     }
 
