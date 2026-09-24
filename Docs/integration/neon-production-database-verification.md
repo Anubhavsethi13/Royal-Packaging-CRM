@@ -266,8 +266,8 @@ For production deployment on Render (Backend) and Vercel (Frontend):
    - Configure `SESSION_SECRET`: Generate and inject a 64-character hex string.
    - Configure `FRONTEND_ORIGIN`: Set to `https://crm.royalpackaging.com` (or the Vercel production domain).
    - Configure `NODE_ENV`: Set to `production`.
-   - Build Command: `npm run build`
-   - Start Command: `node dist/apps/api/src/server.js` (or `npm run start`)
+   - Build Command: `npm install && npm run build`
+   - Start Command: `npm run start` (executes `tsx apps/api/src/server.ts`)
    - Pre-Deploy / Migration Command: `npm run db:migrate && npm run db:seed`
 2. **Vercel (Frontend) Environment Variables:**
    - Configure `VITE_API_URL`: Set to the Render backend production URL (e.g. `https://api.royalpackaging.com` or Render service URL).
