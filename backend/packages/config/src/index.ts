@@ -40,7 +40,21 @@ export const environmentSchema = z
     FLOOT_ENDPOINT: optionalUrl,
     FLOOT_API_KEY: optionalNonEmptyString,
     LOG_LEVEL: logLevelSchema.default("info"),
-    LOG_FORMAT: logFormatSchema.default("json")
+    LOG_FORMAT: logFormatSchema.default("json"),
+    /** IANA timezone that defines operational days/weeks/months for KPI results. */
+    OPERATIONS_TIMEZONE: z
+      .string()
+      .trim()
+      .min(1)
+      .default("UTC")
+      .refine((value) => {
+        try {
+          new Intl.DateTimeFormat("en-US", { timeZone: value });
+          return true;
+        } catch {
+          return false;
+        }
+      }, { message: "OPERATIONS_TIMEZONE must be a valid IANA timezone (e.g. Asia/Kolkata)" })
   })
   .superRefine((value, context) => {
     const hasFlootEndpoint = value.FLOOT_ENDPOINT !== undefined;

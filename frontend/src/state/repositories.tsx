@@ -12,6 +12,7 @@ import {
 import { repositories as mockRepositories } from '../mock/repositories';
 import type { AuditRecord, ClientRecord, EmployeeRecord, IncentiveRecord, InventoryRecord, KpiRecord, OrderRecord, PayrollRecord, ReportRecord, TaskRecord } from '../types/domain';
 import type { KpiResultReadModel } from '../kpi/kpi-result-domain';
+import { kpiResultsApiRepositoryConfig } from '../kpi/kpi-result-api';
 import {
   mapClientCreateBody,
   mapClientDtoToRecord,
@@ -125,6 +126,7 @@ export function createDefaultApiRepositoryConfiguration(): ApiRepositoryConfigur
     employees: { resourcePath: '/employees', decodeDetail: decodePassthrough },
     tasks: { resourcePath: '/tasks', decodeDetail: decodePassthrough },
     kpis: { resourcePath: '/kpi/definitions', decodeDetail: decodePassthrough },
+    kpiResults: kpiResultsApiRepositoryConfig,
     incentives: { resourcePath: '/incentives', decodeDetail: decodePassthrough },
     payroll: { resourcePath: '/payroll', decodeDetail: decodePassthrough },
     audits: { resourcePath: '/audits', decodeDetail: decodePassthrough },

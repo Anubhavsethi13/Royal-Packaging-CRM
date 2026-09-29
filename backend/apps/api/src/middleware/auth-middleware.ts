@@ -320,6 +320,10 @@ export class DatabaseRBACAuthorizationPolicy implements AuthorizationPolicy {
       // read; there is no depot/team scope, so it covers every warehouse.
       case "kpi:read_config":
         return isManagementTier;
+      // KPI results: every approved role may open them; the route narrows
+      // non-management callers (no `kpi:read_all`) to their own employee.
+      case "kpi:read_results":
+        return isApprovedRole;
 
       case "shift:read": {
         if (isManagementTier) {

@@ -1,6 +1,6 @@
 import type { DataScope, Role } from '../types/v1';
 
-export const KPI_METRIC_CODES = ['BOXES_HANDLED', 'TASKS_COMPLETED', 'TIME_TAKEN', 'SLA_COMPLIANCE'] as const;
+export const KPI_METRIC_CODES = ['BOXES_HANDLED', 'TASKS_COMPLETED', 'TIME_TAKEN', 'AVERAGE_BOXES_PER_TASK', 'SLA_COMPLIANCE'] as const;
 export type KpiMetricCode = (typeof KPI_METRIC_CODES)[number];
 
 export const KPI_SOURCE_TYPES = ['TASK', 'WAREHOUSE_OPERATION', 'LOADING_OPERATION', 'UNLOADING_OPERATION'] as const;
@@ -98,6 +98,10 @@ export interface KpiSourceRecordReference {
   sourceRecordId: string;
   sourceType: KpiSourceType;
   taskId?: string;
+  /** Display code of the source task, when the backend supplies it. */
+  taskCode?: string;
+  /** Employees credited with the source task (its BOX quantity is shared between them). */
+  participants?: number;
   operationType?: KpiOperation;
   employeeId?: string;
   employeeName?: string;

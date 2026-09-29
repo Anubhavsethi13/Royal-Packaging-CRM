@@ -36,7 +36,7 @@ describe('KPI result presentation', () => {
       '2026-08-24T00:00:00.000Z',
     ]);
     expect(toKpiResultTrendPoints(history).map((point) => point.actual.value)).toEqual([451, 488, 462]);
-    expect(toKpiResultTrendPoints(history).map((point) => point.target.value)).toEqual([500, 500, 500]);
+    expect(toKpiResultTrendPoints(history).map((point) => point.target?.value)).toEqual([500, 500, 500]);
   });
 
   it('keeps history tied to the selected employee and KPI', () => {

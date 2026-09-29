@@ -62,6 +62,7 @@ except `POST /auth/login` and `GET /health*`.
 | GET | /shift-entries/:id | shift:read | shift-entries | Owner or management tier |
 | GET | /warehouse/operations, /warehouse/operations/:id | warehouse:read_operations (+ warehouse:read_all_operations for unscoped) | warehouse | Read-only task projection (also backs Loading & unloading via `operation_type=LOADING,UNLOADING`); see `Docs/api/warehouse-operations.md` |
 | GET | /locations | location:read | warehouse | Existing `locations` + depots + BOX on hand |
+| GET | /kpi/results, /kpi/results/:id | kpi:read_results (+ kpi:read_all for every employee) | kpi | KPI results calculated on demand from completed tasks; see `Docs/api/kpi-results.md` |
 | GET | /kpi/definitions, /kpi/definitions/:id | kpi:read_config | kpi | Read-only KPI configuration (definitions + targets); see `Docs/api/kpi-configuration.md` |
 | GET | /kpi/me/summary | kpi:read_own | kpi | Shift-entry KPIs for the session employee; see `Docs/api/kpi-shift-summary.md` |
 | GET | /kpi/summary | kpi:read_all | kpi | Management aggregate + per-employee rows (management tier) |

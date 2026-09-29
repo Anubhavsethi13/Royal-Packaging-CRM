@@ -13,6 +13,8 @@ export interface KpiResultPeriod {
   start: string;
   end: string;
   displayLabel?: string;
+  /** IANA timezone that defines the period boundaries, when supplied. */
+  timezone?: string;
 }
 
 export interface KpiResultEmployee {
@@ -28,18 +30,24 @@ export interface KpiResultReadModel {
   employee?: KpiResultEmployee;
   kpiId: string;
   kpiName: string;
+  kpiCode?: string;
   ruleVersionId: string;
   metric: KpiMetricCode;
   category: KpiCategory;
   operation: KpiOperation;
   scope: DataScope;
   period: KpiResultPeriod;
-  target: KpiResultValue;
-  actual: KpiResultValue;
+  /** Absent when no target is configured for the KPI and period. */
+  target?: KpiResultValue;
+  /** Absent only when the value cannot be calculated (status NOT_AVAILABLE). */
+  actual?: KpiResultValue;
   unit: KpiUnit;
   direction: KpiComparisonDirection;
   status: KpiResultStatus;
+  notAvailableReason?: string;
   sourceReferences: KpiSourceRecordReference[];
+  /** Number of source records behind the result (list responses omit the references themselves). */
+  sourceCount?: number;
   calculatedAt?: string;
   calculationVersion?: string;
   isMock: boolean;
@@ -51,8 +59,9 @@ export function validateKpiResult(result: KpiResultReadModel): string[] {
   if (!result.employeeId || !result.kpiId || !result.ruleVersionId) errors.push('Result traceability identifiers are required.');
   if (!result.period.start || !result.period.end || !result.period.kind) errors.push('Result period is required.');
   if (Date.parse(result.period.end) < Date.parse(result.period.start)) errors.push('Result period end must not precede its start.');
-  if (!Number.isFinite(result.target.value) || !Number.isFinite(result.actual.value)) errors.push('Target and actual values must be finite read-only values.');
-  if (result.target.unit !== result.unit || result.actual.unit !== result.unit) errors.push('Target, actual, and result units must agree.');
+  if (result.target && !Number.isFinite(result.target.value)) errors.push('Target value must be a finite read-only value.');
+  if (result.actual ? !Number.isFinite(result.actual.value) : result.status !== 'NOT_AVAILABLE') errors.push('Actual value must be a finite read-only value unless the result is NOT_AVAILABLE.');
+  if ((result.target && result.target.unit !== result.unit) || (result.actual && result.actual.unit !== result.unit)) errors.push('Target, actual, and result units must agree.');
   if (result.metric === 'BOXES_HANDLED' && result.unit !== 'BOX') errors.push('BOXES_HANDLED results must use BOX units.');
   if (result.metric === 'TIME_TAKEN' && result.unit !== 'DURATION') errors.push('TIME_TAKEN results must use DURATION units.');
   if (result.metric === 'SLA_COMPLIANCE' && result.unit !== 'PERCENTAGE') errors.push('SLA_COMPLIANCE results must use PERCENTAGE units.');

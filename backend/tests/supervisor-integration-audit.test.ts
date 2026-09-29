@@ -97,7 +97,8 @@ test("AUDIT-1: management roles get the unscoped view on every Supervisor surfac
     assert.equal(await total(role, "/locations"), 1, `${role} locations`);
     assert.equal(await total(role, "/kpi/definitions"), 1, `${role} kpi config`);
     assert.equal(await status(role, `/kpi/definitions/${ids.kpi}`), 200, `${role} kpi config detail`);
-    assert.equal(await status(role, "/kpis"), 200, `${role} kpi snapshots (existing results route)`);
+    assert.equal(await status(role, "/kpis"), 200, `${role} kpi snapshots`);
+    assert.equal(await status(role, "/kpi/results"), 200, `${role} kpi results`);
   }
 });
 
@@ -112,11 +113,14 @@ test("AUDIT-2: EMPLOYEE is scoped to own tasks, may read locations, and is denie
   assert.equal(await status("EMPLOYEE", `/kpi/definitions/${ids.kpi}`), 403);
   // Existing semantics, unchanged: kpi:read (snapshots) is open to every approved role.
   assert.equal(await status("EMPLOYEE", "/kpis"), 200);
+  // KPI results: own only; naming another employee is refused.
+  assert.equal(await status("EMPLOYEE", "/kpi/results"), 200);
+  assert.equal(await status("EMPLOYEE", `/kpi/results?employee_id=${actors.SUPERVISOR.employeeId}`), 403);
 });
 
 test("AUDIT-3: identity and role come only from the server session", async () => {
   const forged = { "X-User-Role": "SUPER_ADMIN", "X-User-Id": "someone-else", "X-Permissions": "*", Authorization: "Bearer not-a-real-token" };
-  for (const path of ["/warehouse/operations", "/locations", "/kpi/definitions", "/kpis"]) {
+  for (const path of ["/warehouse/operations", "/locations", "/kpi/definitions", "/kpis", "/kpi/results"]) {
     assert.equal(await status(null, path, forged), 401, `anonymous ${path}`);
   }
   // An employee cookie plus forged headers is still an employee.

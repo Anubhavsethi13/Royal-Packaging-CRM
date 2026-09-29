@@ -1,4 +1,8 @@
 import type {
+  KpiResultDetailDTO,
+  KpiResultDTO,
+  KpiResultPeriodKind,
+  ListKpiResultsFilter,
   KpiDefinitionConfigDetailDTO,
   KpiDefinitionConfigDTO,
   ListKpiDefinitionsFilter,
@@ -17,12 +21,15 @@ import { sql } from "kysely";
 import { requireActiveEmployeeId } from "../shift-entries/shift-entry-service.js";
 import type { KpiDataSource, KpiSourceFilter } from "./kpi-data-source.js";
 import { KpiConfigurationReader } from "./kpi-configuration-reader.js";
+import { KpiResultCalculator, type KpiResultScope } from "./kpi-result-calculator.js";
 import { ShiftEntryKpiSource } from "./shift-entry-kpi-source.js";
 
 export interface KpiServiceConfig {
   readonly database: DatabaseConnection;
   /** Override the shift-entry data source (defaults to the database-backed one). */
   readonly shiftEntrySource?: KpiDataSource;
+  /** IANA timezone for KPI result periods (OPERATIONS_TIMEZONE); defaults to UTC. */
+  readonly timeZone?: string;
 }
 
 export interface ManagementKpiSummaryResult {
@@ -39,11 +46,34 @@ export class KpiService {
   private readonly database: DatabaseConnection;
   private readonly shiftEntrySource: KpiDataSource;
   private readonly configuration: KpiConfigurationReader;
+  private readonly results: KpiResultCalculator;
 
   public constructor(config: KpiServiceConfig) {
     this.database = config.database;
     this.shiftEntrySource = config.shiftEntrySource ?? new ShiftEntryKpiSource(config.database);
     this.configuration = new KpiConfigurationReader(config.database);
+    this.results = new KpiResultCalculator(config.database, config.timeZone ?? "UTC");
+  }
+
+  /** KPI results calculated on demand from completed tasks for active, calculable KPI definitions. */
+  public listResults(filter: ListKpiResultsFilter, scope: KpiResultScope, now: Date = new Date()): Promise<KpiResultDTO[]> {
+    return this.results.list(filter, scope, now);
+  }
+
+  /** One KPI result (with source references) by its id parts, or null. */
+  public getResult(
+    id: { kpiId: string; employeeId: string; period: KpiResultPeriodKind; start: string },
+    now: Date = new Date()
+  ): Promise<KpiResultDetailDTO | null> {
+    return this.results.get(id, now);
+  }
+
+  public findActiveEmployeeId(userId: string): Promise<string | null> {
+    return this.results.findActiveEmployeeId(userId);
+  }
+
+  public employeeExists(employeeId: string): Promise<boolean> {
+    return this.results.employeeExists(employeeId);
   }
 
   /** KPI definitions with their current targets (read-only configuration). */

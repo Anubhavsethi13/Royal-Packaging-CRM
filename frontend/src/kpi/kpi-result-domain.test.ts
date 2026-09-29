@@ -27,9 +27,9 @@ describe('KPI result domain and read model', () => {
     const time = kpiResults.find((result) => result.metric === 'TIME_TAKEN')!;
     const sla = kpiResults.find((result) => result.metric === 'SLA_COMPLIANCE')!;
     expect(boxes.period).toMatchObject({ kind: 'WEEKLY', start: expect.any(String), end: expect.any(String) });
-    expect(boxes.target.unit).toBe('BOX'); expect(boxes.actual.unit).toBe('BOX');
-    expect(time.target.unit).toBe('DURATION'); expect(time.actual.unit).toBe('DURATION');
-    expect(sla.target.unit).toBe('PERCENTAGE'); expect(sla.actual.unit).toBe('PERCENTAGE');
+    expect(boxes.target!.unit).toBe('BOX'); expect(boxes.actual!.unit).toBe('BOX');
+    expect(time.target!.unit).toBe('DURATION'); expect(time.actual!.unit).toBe('DURATION');
+    expect(sla.target!.unit).toBe('PERCENTAGE'); expect(sla.actual!.unit).toBe('PERCENTAGE');
     expect(boxes.sourceReferences[0]?.quantity?.unit).toBe('BOX');
   });
 
@@ -54,7 +54,7 @@ describe('KPI result domain and read model', () => {
     operationalData.push({ ...operationalData[0], id: 'new-task', boxesCompleted: 1 });
     const after = (await repository.getById('kpi-result-demo-boxes-emp-002'))!;
     expect(after.actual).toEqual(before.actual);
-    expect(after.actual.value).toBe(462);
+    expect(after.actual!.value).toBe(462);
   });
 
   it('keeps source traceability and does not expose a calculated score field', () => {

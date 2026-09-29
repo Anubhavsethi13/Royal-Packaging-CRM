@@ -2,6 +2,8 @@ import {
   buildPageMeta,
   employeeKpiSummaryFilterSchema,
   listKpiDefinitionsFilterSchema,
+  listKpiResultsFilterSchema,
+  parseKpiResultId,
   managementKpiSummaryFilterSchema
 } from "@royal-packaging/contracts";
 import { z } from "zod";
@@ -10,11 +12,12 @@ import {
   requireAuth,
   requireAuthorization
 } from "../middleware/auth-middleware.js";
-import { BadRequestError, NotFoundError, UnauthorizedError } from "../middleware/error-handler.js";
+import { BadRequestError, ForbiddenError, HttpError, NotFoundError, UnauthorizedError } from "../middleware/error-handler.js";
 import type { AuthService } from "../modules/identity/auth-service.js";
+import { KpiResultRequestError, type KpiResultScope } from "../modules/kpi/kpi-result-calculator.js";
 import type { KpiService } from "../modules/kpi/kpi-service.js";
 import type { ApiContext, Router } from "../router.js";
-import { parsePagination, sendJson, sendList, withCamelCaseMirror } from "../utils/http-utils.js";
+import { pageItems, parsePagination, sendJson, sendList, withCamelCaseMirror } from "../utils/http-utils.js";
 
 const uuidSchema = z.string().uuid({ message: "Must be a valid UUID" });
 
@@ -89,6 +92,73 @@ export function registerKpiRoutes(
       throw new NotFoundError(`KPI definition with ID '${id}' was not found`);
     }
     sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(definition) });
+  });
+
+  /** `kpi:read_all` (management tier) sees every employee; anyone else only themselves (null = no employee profile). */
+  const resolveResultScope = async (ctx: ApiContext): Promise<KpiResultScope | null> => {
+    if (await authPolicy.evaluate(ctx, "kpi:read_all")) {
+      return {};
+    }
+    const employeeId = await kpiService.findActiveEmployeeId(ctx.user!.id);
+    return employeeId ? { employeeId } : null;
+  };
+  const asHttpError = (err: unknown): unknown =>
+    err instanceof KpiResultRequestError ? new HttpError(400, err.code, err.message, [{ field: err.field, code: err.code.toLowerCase(), message: err.message }]) : err;
+
+  // GET /kpi/results - KPI results calculated on demand from completed tasks.
+  router.get("/kpi/results", auth, authz("kpi:read_results"), async (ctx: ApiContext) => {
+    const pagination = parsePagination(ctx.query);
+    const query = (snake: string, camel?: string) => ctx.query.get(snake) ?? (camel ? ctx.query.get(camel) : null) ?? undefined;
+    const filter = listKpiResultsFilterSchema.parse({
+      period: query("period"),
+      from: query("from", "periodStart"),
+      to: query("to", "periodEnd"),
+      employee_id: query("employee_id", "employeeId"),
+      kpi_id: query("kpi_id", "kpiId"),
+      metric: query("metric"),
+      operation: query("operation"),
+      status: query("status"),
+      warehouse_code: query("warehouse_code", "warehouseCode"),
+      search: query("search")
+    });
+
+    if (filter.employee_id && !(await kpiService.employeeExists(filter.employee_id))) {
+      throw new HttpError(400, "INVALID_EMPLOYEE", `Employee '${filter.employee_id}' does not exist.`, [
+        { field: "employee_id", code: "invalid_employee", message: `Employee '${filter.employee_id}' does not exist.` }
+      ]);
+    }
+    const scope = await resolveResultScope(ctx);
+    if (filter.employee_id && (!scope || (scope.employeeId && scope.employeeId !== filter.employee_id))) {
+      throw new ForbiddenError("You may only view your own KPI results.");
+    }
+    if (!scope) {
+      sendList(ctx.res, [], pagination, 0);
+      return;
+    }
+
+    try {
+      const results = await kpiService.listResults(filter, scope);
+      sendList(ctx.res, withCamelCaseMirror(pageItems(results, pagination)), pagination, results.length);
+    } catch (err) {
+      throw asHttpError(err);
+    }
+  });
+
+  // GET /kpi/results/:id - one result with its source task references.
+  router.get("/kpi/results/:id", auth, authz("kpi:read_results"), async (ctx: ApiContext) => {
+    const parsed = parseKpiResultId(ctx.params.id ?? "");
+    if (!parsed) {
+      throw new BadRequestError("Invalid KPI result ID format");
+    }
+    const scope = await resolveResultScope(ctx);
+    if (!scope || (scope.employeeId && scope.employeeId !== parsed.employeeId)) {
+      throw new ForbiddenError("You may only view your own KPI results.");
+    }
+    const result = await kpiService.getResult(parsed);
+    if (!result) {
+      throw new NotFoundError(`KPI result '${ctx.params.id}' was not found`);
+    }
+    sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(result) });
   });
 
   // GET /kpis

@@ -274,3 +274,9 @@ The mode check stays. It changes from all-or-nothing to per page: a page in API 
 | KPI results | **Not connected.** Still shows "KPI results API unavailable" by design: no backend result contract exists (`kpi_snapshots` is never written, and its shape does not match the frontend result model). Not implemented in these phases. |
 
 Verified with a role matrix test (`backend/tests/supervisor-integration-audit.test.ts`), the full test suites, and a browser smoke test in API mode as the seeded Supervisor (full reloads and in-app navigation on all five pages) plus API checks with an Employee account.
+
+### Status update: KPI results (2026-09-30)
+
+- **KPI results: connected.** `GET /kpi/results` and `/kpi/results/:id` calculate results on demand from completed tasks for active, calculable KPI definitions (no persistence, no migration, `kpi_snapshots` unused). See `Docs/api/kpi-results.md`.
+- New optional backend setting `OPERATIONS_TIMEZONE` (default `UTC`) defines operational days, weeks, and months.
+- All five Supervisor pages are now API-connected. Loading & unloading and KPI configuration remain read-only.

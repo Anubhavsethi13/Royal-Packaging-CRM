@@ -139,7 +139,9 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   const ordersService = options.ordersService ?? new OrdersService({ database });
   const organizationService = options.organizationService ?? new OrganizationService({ database });
   const auditService = options.auditService ?? new AuditService({ database });
-  const kpiService = options.kpiService ?? new KpiService({ database });
+  const kpiService =
+    options.kpiService ??
+    new KpiService({ database, ...(appConfig?.OPERATIONS_TIMEZONE ? { timeZone: appConfig.OPERATIONS_TIMEZONE } : {}) });
   const dashboardService = options.dashboardService ?? new DashboardService({ database });
   const payrollService = options.payrollService ?? new PayrollService({ database });
   const reportService = options.reportService ?? new ReportService({ database });
