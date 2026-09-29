@@ -287,9 +287,50 @@ export class DatabaseRBACAuthorizationPolicy implements AuthorizationPolicy {
       case "payroll:write":
         return isManagementTier;
 
+      // 15. Daily shift entries (KPI_DAILY_SHIFT_TRACKING V1).
+      // Creating and listing one's own entries is open to every approved
+      // role (the service additionally requires an active employee profile).
+      // Reading a specific entry: management tier may read any; anyone else
+      // only their own. Supervisor team/depot scoping is an open business
+      // decision, so management-tier reads are unscoped like other reads.
+      case "shift:create":
+      case "shift:read_own":
+        return isApprovedRole;
+
+      // Shift-entry KPI summaries: everyone with an approved role may read
+      // their own (the service derives the employee from the session);
+      // aggregated multi-employee performance is management tier only.
+      case "kpi:read_own":
+        return isApprovedRole;
+      case "kpi:read_all":
+        return isManagementTier;
+
+      case "shift:read": {
+        if (isManagementTier) {
+          return true;
+        }
+        if (isEmployee && resourceId) {
+          return this.isShiftEntryOwner(ctx.user.id, resourceId);
+        }
+        return false;
+      }
+
       default:
         return false;
     }
+  }
+
+  private async isShiftEntryOwner(userId: string, shiftEntryId: string): Promise<boolean> {
+    const owned = await this.database
+      .selectFrom("shift_entries")
+      .innerJoin("employees", "employees.id", "shift_entries.employee_id")
+      .select("shift_entries.id")
+      .where("shift_entries.id", "=", shiftEntryId)
+      .where("employees.user_id", "=", userId)
+      .where("employees.is_active", "=", true)
+      .executeTakeFirst();
+
+    return !!owned;
   }
 
   private async isEmployeeAssignedToTask(

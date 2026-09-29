@@ -76,6 +76,9 @@ const backendPermissionMap: Record<string, string[]> = {
   'EMPLOYEES:VIEW': ['employee:read'],
   'EMPLOYEES:CREATE': ['employee:write'],
   'EMPLOYEES:EDIT': ['employee:write'],
+  'KPI_SUMMARY:VIEW': ['kpi:read_all'],
+  'SHIFTS:VIEW': ['shift:read_own'],
+  'SHIFTS:CREATE': ['shift:create'],
   'KPI:VIEW': ['kpi:read'],
   'KPI:EDIT': ['kpi:write'],
   'KPI:VERIFY': ['kpi:verify'],
@@ -129,16 +132,16 @@ export function rolePermissions(role: Role): string[] {
   const permissions: Record<Role, Array<[string, PermissionAction]>> = {
     SUPER_ADMIN: [],
     ADMIN: [
-      ['DASHBOARD', 'VIEW'], ['EMPLOYEES', 'VIEW'], ['EMPLOYEES', 'CREATE'], ['EMPLOYEES', 'EDIT'],
+      ['DASHBOARD', 'VIEW'], ['SHIFTS', 'VIEW'], ['SHIFTS', 'CREATE'], ['KPI_SUMMARY', 'VIEW'], ['EMPLOYEES', 'VIEW'], ['EMPLOYEES', 'CREATE'], ['EMPLOYEES', 'EDIT'],
       ['TASKS', 'VIEW'], ['TASKS', 'ASSIGN'], ['TASKS', 'ACCEPT'], ['TASKS', 'START'], ['TASKS', 'PAUSE'], ['TASKS', 'RESUME'], ['TASKS', 'COMPLETE'], ['TASKS', 'REOPEN'], ['TASKS', 'CANCEL'], ['TASKS', 'VERIFY'],
       ['WAREHOUSE', 'VIEW'], ['LOADING_UNLOADING', 'VIEW'], ['KPI', 'VIEW'], ['KPI', 'VERIFY'], ['INCENTIVES', 'VIEW'], ['INCENTIVES', 'APPROVE'], ['PAYROLL', 'VIEW'], ['PAYROLL', 'APPROVE'], ['REPORTS', 'VIEW'], ['REPORTS', 'EXPORT'], ['AUDIT', 'VIEW'], ['SETTINGS', 'VIEW'],
     ],
     SUPERVISOR: [
-      ['DASHBOARD', 'VIEW'], ['EMPLOYEES', 'VIEW'], ['TASKS', 'VIEW'], ['TASKS', 'ASSIGN'], ['TASKS', 'START'], ['TASKS', 'PAUSE'], ['TASKS', 'RESUME'], ['TASKS', 'COMPLETE'], ['TASKS', 'REOPEN'], ['TASKS', 'VERIFY'],
+      ['DASHBOARD', 'VIEW'], ['SHIFTS', 'VIEW'], ['SHIFTS', 'CREATE'], ['KPI_SUMMARY', 'VIEW'], ['EMPLOYEES', 'VIEW'], ['TASKS', 'VIEW'], ['TASKS', 'ASSIGN'], ['TASKS', 'START'], ['TASKS', 'PAUSE'], ['TASKS', 'RESUME'], ['TASKS', 'COMPLETE'], ['TASKS', 'REOPEN'], ['TASKS', 'VERIFY'],
       ['WAREHOUSE', 'VIEW'], ['LOADING_UNLOADING', 'VIEW'], ['KPI', 'VIEW'], ['KPI', 'VERIFY'], ['INCENTIVES', 'VIEW'], ['REPORTS', 'VIEW'],
     ],
     EMPLOYEE: [
-      ['DASHBOARD', 'VIEW'], ['TASKS', 'VIEW'], ['TASKS', 'ACCEPT'], ['TASKS', 'START'], ['TASKS', 'PAUSE'], ['TASKS', 'RESUME'], ['TASKS', 'COMPLETE'], ['KPI', 'VIEW'], ['INCENTIVES', 'VIEW'],
+      ['DASHBOARD', 'VIEW'], ['SHIFTS', 'VIEW'], ['SHIFTS', 'CREATE'], ['TASKS', 'VIEW'], ['TASKS', 'ACCEPT'], ['TASKS', 'START'], ['TASKS', 'PAUSE'], ['TASKS', 'RESUME'], ['TASKS', 'COMPLETE'], ['KPI', 'VIEW'], ['INCENTIVES', 'VIEW'],
     ],
   };
   const legacy: Record<Role, string[]> = {

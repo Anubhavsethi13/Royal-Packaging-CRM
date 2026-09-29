@@ -20,6 +20,7 @@ import { OrganizationService } from "./modules/organization/organization-service
 import { PayrollService } from "./modules/payroll/payroll-service.js";
 import { QualityService } from "./modules/quality/quality-service.js";
 import { ReportService } from "./modules/reports/report-service.js";
+import { ShiftEntryService } from "./modules/shift-entries/shift-entry-service.js";
 import { TaskService } from "./modules/warehouse/task-service.js";
 import { WarehouseOrchestrator } from "./modules/warehouse/warehouse-orchestrator.js";
 import { Router } from "./router.js";
@@ -37,6 +38,7 @@ import { registerPayrollRoutes } from "./routes/payroll-routes.js";
 import { registerQualityRoutes } from "./routes/quality-routes.js";
 import { registerReportRoutes } from "./routes/report-routes.js";
 import { registerResyncRoutes } from "./routes/resync-routes.js";
+import { registerShiftEntryRoutes } from "./routes/shift-entry-routes.js";
 import { registerTaskRoutes } from "./routes/task-routes.js";
 import { registerWarehouseRoutes } from "./routes/warehouse-routes.js";
 
@@ -59,6 +61,7 @@ export interface ApiAppOptions {
   readonly dashboardService?: DashboardService;
   readonly payrollService?: PayrollService;
   readonly reportService?: ReportService;
+  readonly shiftEntryService?: ShiftEntryService;
 }
 
 export interface ApiApp {
@@ -79,6 +82,7 @@ export interface ApiApp {
     readonly dashboard: DashboardService;
     readonly payroll: PayrollService;
     readonly reports: ReportService;
+    readonly shiftEntries: ShiftEntryService;
   };
   readonly authorizationPolicy: AuthorizationPolicy;
   handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void>;
@@ -135,6 +139,7 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   const dashboardService = options.dashboardService ?? new DashboardService({ database });
   const payrollService = options.payrollService ?? new PayrollService({ database });
   const reportService = options.reportService ?? new ReportService({ database });
+  const shiftEntryService = options.shiftEntryService ?? new ShiftEntryService({ database });
 
   // Default to server-side authoritative RBAC policy
   const authorizationPolicy =
@@ -173,6 +178,7 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   registerResyncRoutes(router, authService, taskService, inventoryService, kpiService, authorizationPolicy);
   registerPayrollRoutes(router, authService, payrollService, authorizationPolicy);
   registerReportRoutes(router, authService, reportService, authorizationPolicy);
+  registerShiftEntryRoutes(router, authService, shiftEntryService, authorizationPolicy);
 
   const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     await router.handle(req, res);
@@ -207,7 +213,8 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
       kpi: kpiService,
       dashboard: dashboardService,
       payroll: payrollService,
-      reports: reportService
+      reports: reportService,
+      shiftEntries: shiftEntryService
     },
     authorizationPolicy,
     handleRequest,

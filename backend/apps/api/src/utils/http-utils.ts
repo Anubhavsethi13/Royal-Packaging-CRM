@@ -3,12 +3,27 @@ import type { PageMeta, SessionCookieOptions } from "@royal-packaging/contracts"
 import { buildPageMeta } from "@royal-packaging/contracts";
 
 const MAX_BODY_SIZE_BYTES = 1024 * 1024; // 1 MB limit
+const OVERSIZE_DRAIN_FACTOR = 16; // an oversized upload is drained up to 16 MB before the socket is dropped
 
 /** A single field-level error entry in the canonical error envelope. */
 export interface CanonicalErrorField {
   readonly field?: string;
   readonly code?: string;
   readonly message: string;
+}
+
+/** Raised when the request body cannot be read as JSON or exceeds the size limit. */
+export class InvalidRequestBodyError extends Error {
+  public readonly code: "INVALID_JSON" | "PAYLOAD_TOO_LARGE";
+  public readonly statusCode: number;
+
+  public constructor(code: "INVALID_JSON" | "PAYLOAD_TOO_LARGE", message: string) {
+    super(message);
+    this.name = "InvalidRequestBodyError";
+    this.code = code;
+    this.statusCode = code === "PAYLOAD_TOO_LARGE" ? 413 : 400;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
 }
 
 /**
@@ -45,20 +60,33 @@ export async function parseJsonBody<T = unknown>(
   return new Promise((resolve, reject) => {
     let raw = "";
     let receivedBytes = 0;
+    let tooLarge = false;
 
     req.setEncoding("utf8");
 
     req.on("data", (chunk: string) => {
       receivedBytes += Buffer.byteLength(chunk, "utf8");
+      if (tooLarge) {
+        // Keep discarding (without buffering) so the 413 response can be delivered instead of a
+        // connection reset; give up on clients that keep streaming far beyond the limit.
+        if (receivedBytes > maxBytes * OVERSIZE_DRAIN_FACTOR) {
+          req.destroy();
+        }
+        return;
+      }
       if (receivedBytes > maxBytes) {
-        req.destroy();
-        reject(new Error(`Payload too large. Maximum size is ${maxBytes} bytes.`));
+        tooLarge = true;
+        raw = "";
+        reject(new InvalidRequestBodyError("PAYLOAD_TOO_LARGE", `Payload too large. Maximum size is ${maxBytes} bytes.`));
         return;
       }
       raw += chunk;
     });
 
     req.on("end", () => {
+      if (tooLarge) {
+        return;
+      }
       if (!raw || raw.trim() === "") {
         resolve({} as T);
         return;
@@ -67,7 +95,7 @@ export async function parseJsonBody<T = unknown>(
         const parsed = JSON.parse(raw) as T;
         resolve(parsed);
       } catch (err) {
-        reject(new Error(`Invalid JSON in request body: ${err instanceof Error ? err.message : String(err)}`));
+        reject(new InvalidRequestBodyError("INVALID_JSON", `Invalid JSON in request body: ${err instanceof Error ? err.message : String(err)}`));
       }
     });
 

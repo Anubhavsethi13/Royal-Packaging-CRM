@@ -1,8 +1,29 @@
-import type { KpiDrillDownDTO, KpiSnapshotDTO, ListKpiSnapshotsFilter } from "@royal-packaging/contracts";
+import type {
+  EmployeeKpiSummaryDTO,
+  EmployeeKpiSummaryFilter,
+  KpiDrillDownDTO,
+  KpiSnapshotDTO,
+  KpiSummaryAppliedFilters,
+  ListKpiSnapshotsFilter,
+  ManagementKpiSummaryDTO,
+  ManagementKpiSummaryFilter
+} from "@royal-packaging/contracts";
+import { ShiftEntryDomainError } from "@royal-packaging/contracts";
 import type { DatabaseConnection } from "@royal-packaging/db";
+import { sql } from "kysely";
+import { requireActiveEmployeeId } from "../shift-entries/shift-entry-service.js";
+import type { KpiDataSource, KpiSourceFilter } from "./kpi-data-source.js";
+import { ShiftEntryKpiSource } from "./shift-entry-kpi-source.js";
 
 export interface KpiServiceConfig {
   readonly database: DatabaseConnection;
+  /** Override the shift-entry data source (defaults to the database-backed one). */
+  readonly shiftEntrySource?: KpiDataSource;
+}
+
+export interface ManagementKpiSummaryResult {
+  readonly summary: ManagementKpiSummaryDTO;
+  readonly totalEmployees: number;
 }
 
 /**
@@ -12,9 +33,110 @@ export interface KpiServiceConfig {
  */
 export class KpiService {
   private readonly database: DatabaseConnection;
+  private readonly shiftEntrySource: KpiDataSource;
 
   public constructor(config: KpiServiceConfig) {
     this.database = config.database;
+    this.shiftEntrySource = config.shiftEntrySource ?? new ShiftEntryKpiSource(config.database);
+  }
+
+  /**
+   * Shift-entry KPI summary for the employee linked to the session user.
+   * The employee is derived server-side; callers cannot choose it.
+   */
+  public async getEmployeeSummary(userId: string, filter: EmployeeKpiSummaryFilter): Promise<EmployeeKpiSummaryDTO> {
+    const employeeId = await requireActiveEmployeeId(this.database, userId);
+    const resolved = await this.resolveFilter(filter, employeeId);
+    const metrics = await this.shiftEntrySource.aggregate(resolved.source);
+
+    return {
+      source: this.shiftEntrySource.sourceId,
+      unit: "BOX",
+      employee_id: employeeId,
+      filters: resolved.applied,
+      metrics
+    };
+  }
+
+  /** Aggregate plus per-employee shift-entry KPIs across employees. */
+  public async getManagementSummary(
+    filter: ManagementKpiSummaryFilter,
+    page: { limit: number; offset: number }
+  ): Promise<ManagementKpiSummaryResult> {
+    const resolved = await this.resolveFilter(filter, filter.employee_id);
+    const [metrics, byEmployee] = await Promise.all([
+      this.shiftEntrySource.aggregate(resolved.source),
+      this.shiftEntrySource.aggregateByEmployee(resolved.source, page)
+    ]);
+
+    return {
+      summary: {
+        source: this.shiftEntrySource.sourceId,
+        unit: "BOX",
+        filters: resolved.applied,
+        metrics,
+        employees: byEmployee.rows
+      },
+      totalEmployees: byEmployee.totalEmployees
+    };
+  }
+
+  /** Translates request codes to existing ids; unknown codes are validation errors, not silent empties. */
+  private async resolveFilter(
+    filter: EmployeeKpiSummaryFilter,
+    employeeId: string | undefined
+  ): Promise<{ source: KpiSourceFilter; applied: KpiSummaryAppliedFilters }> {
+    let depotId: string | undefined;
+    let truckTypeId: string | undefined;
+    let warehouseCode: string | null = null;
+    let truckTypeCode: string | null = null;
+
+    if (filter.warehouse_code) {
+      const depot = await this.database
+        .selectFrom("depots")
+        .select(["id", "code"])
+        .where(sql<string>`upper(code)`, "=", filter.warehouse_code.toUpperCase())
+        .executeTakeFirst();
+      if (!depot) {
+        throw new ShiftEntryDomainError("INVALID_WAREHOUSE", `Warehouse '${filter.warehouse_code}' does not exist.`, [
+          { field: "warehouse_code", code: "invalid_warehouse", message: `Warehouse '${filter.warehouse_code}' does not exist.` }
+        ]);
+      }
+      depotId = depot.id;
+      warehouseCode = depot.code;
+    }
+
+    if (filter.truck_type) {
+      const truckType = await this.database
+        .selectFrom("truck_types")
+        .select(["id", "code"])
+        .where("code", "=", filter.truck_type.toUpperCase())
+        .executeTakeFirst();
+      if (!truckType) {
+        throw new ShiftEntryDomainError("INVALID_TRUCK_TYPE", `Truck type '${filter.truck_type}' does not exist.`, [
+          { field: "truck_type", code: "invalid_truck_type", message: `Truck type '${filter.truck_type}' does not exist.` }
+        ]);
+      }
+      truckTypeId = truckType.id;
+      truckTypeCode = truckType.code;
+    }
+
+    return {
+      source: {
+        ...(employeeId ? { employeeId } : {}),
+        ...(filter.from ? { from: filter.from } : {}),
+        ...(filter.to ? { to: filter.to } : {}),
+        ...(depotId ? { depotId } : {}),
+        ...(truckTypeId ? { truckTypeId } : {})
+      },
+      applied: {
+        from: filter.from ?? null,
+        to: filter.to ?? null,
+        warehouse_code: warehouseCode,
+        truck_type: truckTypeCode,
+        employee_id: employeeId ?? null
+      }
+    };
   }
 
   public async list(filter: ListKpiSnapshotsFilter = {}): Promise<KpiSnapshotDTO[]> {

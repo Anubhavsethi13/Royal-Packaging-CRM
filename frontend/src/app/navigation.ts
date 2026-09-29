@@ -32,6 +32,8 @@ export const navigationGroups: NavigationGroup[] = [
   ] },
   { id: 'people-performance', label: 'Performance', items: [
     { id: 'employees', label: 'Employees', path: routes.employees, icon: Users, permission: { module: 'EMPLOYEES', action: 'VIEW' } },
+    { id: 'my-shifts', label: 'My shifts', path: routes.myShifts, icon: ClipboardList, permission: { module: 'SHIFTS', action: 'VIEW' } },
+    { id: 'shift-kpi-summary', label: 'Shift KPI summary', path: routes.shiftKpiSummary, icon: BarChart3, permission: { module: 'KPI_SUMMARY', action: 'VIEW' } },
     { id: 'kpis', label: 'KPI', path: routes.kpis, icon: BarChart3, permission: { module: 'KPI', action: 'VIEW' } },
     { id: 'kpi-results', label: 'KPI results', path: routes.kpiResults, icon: BarChart3, permission: { module: 'KPI', action: 'VIEW' } },
     { id: 'incentives', label: 'Incentives', path: routes.incentives, icon: Activity, permission: { module: 'INCENTIVES', action: 'VIEW' } },
@@ -64,6 +66,9 @@ export const routePermissions: Array<{ prefix: string; permission: PermissionReq
   { prefix: routes.warehouse, permission: { module: 'WAREHOUSE', action: 'VIEW' } },
   { prefix: routes.locations, permission: { module: 'LOCATIONS', action: 'VIEW' } },
   { prefix: routes.loadingUnloading, permission: { module: 'LOADING_UNLOADING', action: 'VIEW' } },
+  { prefix: routes.shiftEntryNew, permission: { module: 'SHIFTS', action: 'CREATE' } },
+  { prefix: routes.shiftKpiSummary, permission: { module: 'KPI_SUMMARY', action: 'VIEW' } },
+  { prefix: routes.myShifts, permission: { module: 'SHIFTS', action: 'VIEW' } },
   { prefix: routes.employees, permission: { module: 'EMPLOYEES', action: 'VIEW' } },
   { prefix: routes.kpiResults, permission: { module: 'KPI', action: 'VIEW' } },
   { prefix: routes.kpis, permission: { module: 'KPI', action: 'VIEW' } },

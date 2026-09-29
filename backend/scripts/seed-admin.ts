@@ -84,7 +84,16 @@ const PERMISSIONS: PermissionDef[] = [
   { code: "audit:read", name: "Read Audit Logs" },
   { code: "dashboard:read", name: "Read Dashboard" },
   { code: "kpi:read", name: "Read KPI" },
-  { code: "resync:read", name: "Read Resync" }
+  { code: "resync:read", name: "Read Resync" },
+
+  // Daily shift entries
+  { code: "shift:create", name: "Create Own Shift Entry" },
+  { code: "shift:read_own", name: "Read Own Shift Entries" },
+  { code: "shift:read", name: "Read Shift Entry Detail" },
+
+  // Shift-entry KPI summaries
+  { code: "kpi:read_own", name: "Read Own KPI Summary" },
+  { code: "kpi:read_all", name: "Read All Employee KPI Summaries" }
 ];
 
 const MANAGEMENT_PERMISSIONS = [
@@ -97,7 +106,9 @@ const MANAGEMENT_PERMISSIONS = [
   "warehouse:scan", "warehouse:read_tasks", "warehouse:read_route",
   "quality:inspect", "quality:record_photo", "quality:read_record", "quality:read_photos", "quality:read_history",
   "incentive:read", "payroll:read", "payroll:write", "report:read", "report:execute",
-  "audit:read", "dashboard:read", "kpi:read", "resync:read"
+  "audit:read", "dashboard:read", "kpi:read", "resync:read",
+  "shift:create", "shift:read_own", "shift:read",
+  "kpi:read_own", "kpi:read_all"
 ];
 
 const EMPLOYEE_PERMISSIONS = [
@@ -107,7 +118,9 @@ const EMPLOYEE_PERMISSIONS = [
   "inventory:read_catalog", "inventory:read_balances", "inventory:read_movement", "inventory:move",
   "warehouse:scan", "warehouse:read_tasks", "warehouse:read_route",
   "quality:record_photo", "quality:read_record", "quality:read_photos",
-  "dashboard:read", "resync:read"
+  "dashboard:read", "resync:read",
+  "shift:create", "shift:read_own", "shift:read",
+  "kpi:read_own"
 ];
 
 const AUDITOR_PERMISSIONS = [

@@ -9,3 +9,4 @@ export * from "./organization/index.js";
 export * from "./payroll/index.js";
 export * from "./kpi-reports/index.js";
 export * from "./audit-realtime/index.js";
+export * from "./shift-entries/index.js";

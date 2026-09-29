@@ -444,6 +444,42 @@ export interface ReportExecutionsTable {
 }
 
 /** Approved database shape including FND-18 canonical incentive engine. */
+export interface TruckTypesTable {
+  id: string;
+  code: string;
+  name: string;
+  active: Generated<boolean>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  version: Version;
+}
+
+export interface ShiftEntriesTable {
+  id: string;
+  employee_id: string;
+  work_date: string;
+  shift_start: string;
+  shift_end: string;
+  labour_count: number;
+  unloading_total: number;
+  loading_total: number;
+  created_by_user_id: string;
+  updated_by_user_id: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  version: Version;
+}
+
+export interface ShiftEntryDepotsTable {
+  shift_entry_id: string;
+  depot_id: string;
+}
+
+export interface ShiftEntryTruckTypesTable {
+  shift_entry_id: string;
+  truck_type_id: string;
+}
+
 export interface RoyalPackagingDatabase {
   users: UsersTable;
   sessions: SessionsTable;
@@ -481,6 +517,10 @@ export interface RoyalPackagingDatabase {
   payroll_approvals: PayrollApprovalsTable;
   report_definitions: ReportDefinitionsTable;
   report_executions: ReportExecutionsTable;
+  truck_types: TruckTypesTable;
+  shift_entries: ShiftEntriesTable;
+  shift_entry_depots: ShiftEntryDepotsTable;
+  shift_entry_truck_types: ShiftEntryTruckTypesTable;
 }
 
 

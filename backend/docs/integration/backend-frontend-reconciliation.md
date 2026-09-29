@@ -57,6 +57,11 @@ except `POST /auth/login` and `GET /health*`.
 | GET | /reports | report:read | reports | |
 | POST | /reports/:code/executions | report:execute | reports | |
 | GET | /report-executions/:id | report:read | reports | |
+| POST | /shift-entries | shift:create | shift-entries | Employee derived from session; see `Docs/api/shift-entries.md` |
+| GET | /shift-entries/me | shift:read_own | shift-entries | Paginated, `from`/`to` filters |
+| GET | /shift-entries/:id | shift:read | shift-entries | Owner or management tier |
+| GET | /kpi/me/summary | kpi:read_own | kpi | Shift-entry KPIs for the session employee; see `Docs/api/kpi-shift-summary.md` |
+| GET | /kpi/summary | kpi:read_all | kpi | Management aggregate + per-employee rows (management tier) |
 
 ## 2. Canonical error envelope
 
@@ -148,6 +153,24 @@ response shape (`{success:true,...}`) was changed.
     have (or need) an `employees` row. This mirrors how `task_events`
     already records actors.
 
+## 3b. Daily shift entries (KPI_DAILY_SHIFT_TRACKING, Phase 1)
+
+- Warehouses reuse `depots`; employees reuse `employees`; `truck_types` is
+  new because no truck model existed. `shift_entries` is deliberately not
+  the existing `shifts` table (shift templates).
+- `shift:*` RBAC actions were added to `DatabaseRBACAuthorizationPolicy`
+  and the seed; `kpi:read` was not reused because every approved role holds it.
+- Malformed JSON bodies previously surfaced as HTTP 500; `parseJsonBody` now
+  raises `InvalidRequestBodyError`, mapped to 400 `INVALID_JSON` (413
+  `PAYLOAD_TOO_LARGE`) for all routes. An oversized upload is drained (up to
+  16x the limit) rather than destroyed, so clients receive the 413 envelope
+  instead of a connection reset.
+- Phase 2: shift entries are a KPI data source (`KpiDataSource` /
+  `ShiftEntryKpiSource`) behind the existing `KpiService`; metrics are live
+  SQL aggregates, not written to `kpi_snapshots`. Formulas: `Docs/api/kpi-shift-summary.md`.
+- Provisional business rules (one entry per employee/day, no overnight
+  shifts, unscoped management reads) are listed in `Docs/api/shift-entries.md`.
+
 ## 4. What remains genuinely outstanding
 
 - Payroll disbursement/"paid" state and any payout-file export.
@@ -157,3 +180,7 @@ response shape (`{success:true,...}`) was changed.
 - Rate limiting is in-memory/single-instance only (documented in
   `rate-limit-middleware.ts`); a multi-instance deployment needs a shared
   store (e.g. Redis) instead.
+- Shift entries: `PATCH /shift-entries/:id`, KPI aggregation
+  (`/kpi/me/summary`, `/kpi/summary`), a management list endpoint, a truck
+  types lookup endpoint, and a change-history/audit trail (see
+  `Docs/api/shift-entries.md`).

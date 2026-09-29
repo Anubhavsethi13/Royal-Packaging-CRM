@@ -1,14 +1,19 @@
+import {
+  buildPageMeta,
+  employeeKpiSummaryFilterSchema,
+  managementKpiSummaryFilterSchema
+} from "@royal-packaging/contracts";
 import { z } from "zod";
 import {
   type AuthorizationPolicy,
   requireAuth,
   requireAuthorization
 } from "../middleware/auth-middleware.js";
-import { BadRequestError, NotFoundError } from "../middleware/error-handler.js";
+import { BadRequestError, NotFoundError, UnauthorizedError } from "../middleware/error-handler.js";
 import type { AuthService } from "../modules/identity/auth-service.js";
 import type { KpiService } from "../modules/kpi/kpi-service.js";
 import type { ApiContext, Router } from "../router.js";
-import { sendJson, withCamelCaseMirror } from "../utils/http-utils.js";
+import { parsePagination, sendJson, withCamelCaseMirror } from "../utils/http-utils.js";
 
 const uuidSchema = z.string().uuid({ message: "Must be a valid UUID" });
 
@@ -20,6 +25,45 @@ export function registerKpiRoutes(
 ): void {
   const auth = requireAuth(authService);
   const authz = (action: string) => requireAuthorization(authPolicy, action);
+
+  // GET /kpi/me/summary - shift-entry KPIs for the session's own employee only.
+  router.get("/kpi/me/summary", auth, authz("kpi:read_own"), async (ctx: ApiContext) => {
+    if (!ctx.user) {
+      throw new UnauthorizedError("Authentication required.");
+    }
+    if (ctx.query.has("employee_id") || ctx.query.has("employeeId")) {
+      throw new BadRequestError("employee_id is not accepted here; the employee is derived from the session.");
+    }
+    const filter = employeeKpiSummaryFilterSchema.parse({
+      from: ctx.query.get("from") ?? undefined,
+      to: ctx.query.get("to") ?? undefined,
+      warehouse_code: ctx.query.get("warehouse_code") ?? undefined,
+      truck_type: ctx.query.get("truck_type") ?? undefined
+    });
+    const summary = await kpiService.getEmployeeSummary(ctx.user.id, filter);
+    sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(summary) });
+  });
+
+  // GET /kpi/summary - management aggregate plus a paginated per-employee breakdown.
+  router.get("/kpi/summary", auth, authz("kpi:read_all"), async (ctx: ApiContext) => {
+    const pagination = parsePagination(ctx.query);
+    const filter = managementKpiSummaryFilterSchema.parse({
+      from: ctx.query.get("from") ?? undefined,
+      to: ctx.query.get("to") ?? undefined,
+      warehouse_code: ctx.query.get("warehouse_code") ?? undefined,
+      truck_type: ctx.query.get("truck_type") ?? undefined,
+      employee_id: ctx.query.get("employee_id") ?? undefined
+    });
+    const result = await kpiService.getManagementSummary(filter, {
+      limit: pagination.pageSize,
+      offset: pagination.offset
+    });
+    sendJson(ctx.res, 200, {
+      success: true,
+      data: withCamelCaseMirror(result.summary),
+      meta: buildPageMeta(pagination.page, pagination.pageSize, result.totalEmployees)
+    });
+  });
 
   // GET /kpis
   router.get("/kpis", auth, authz("kpi:read"), async (ctx: ApiContext) => {

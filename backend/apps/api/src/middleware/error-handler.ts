@@ -7,10 +7,11 @@ import {
   PayrollDomainError,
   QualityDomainError,
   ReportDomainError,
+  ShiftEntryDomainError,
   TaskDomainError
 } from "@royal-packaging/contracts";
 import { ZodError } from "zod";
-import { InvalidPaginationError, sendError } from "../utils/http-utils.js";
+import { InvalidPaginationError, InvalidRequestBodyError, sendError } from "../utils/http-utils.js";
 
 export class HttpError extends Error {
   public readonly statusCode: number;
@@ -73,6 +74,11 @@ export function handleApiError(err: unknown, res: ServerResponse, requestId?: st
   // 1. Explicit HTTP Errors
   if (err instanceof InvalidPaginationError) {
     sendError(res, 400, "VALIDATION_FAILED", err.message, err.details, {}, requestId);
+    return;
+  }
+
+  if (err instanceof InvalidRequestBodyError) {
+    sendError(res, err.statusCode, err.code, err.message, undefined, {}, requestId);
     return;
   }
 
@@ -154,6 +160,11 @@ export function handleApiError(err: unknown, res: ServerResponse, requestId?: st
   if (err instanceof ReportDomainError) {
     const statusCode = mapReportErrorCodeToStatus(err.code);
     sendError(res, statusCode, err.code, err.message, undefined, {}, requestId);
+    return;
+  }
+
+  if (err instanceof ShiftEntryDomainError) {
+    sendError(res, mapShiftEntryErrorCodeToStatus(err.code), err.code, err.message, err.fields, {}, requestId);
     return;
   }
 
@@ -314,6 +325,19 @@ function mapReportErrorCodeToStatus(code: string): number {
     case "UNSUPPORTED_EXPORT_FORMAT":
       return 400;
     case "VALIDATION_FAILED":
+    default:
+      return 400;
+  }
+}
+
+function mapShiftEntryErrorCodeToStatus(code: string): number {
+  switch (code) {
+    case "SHIFT_ENTRY_NOT_FOUND":
+      return 404;
+    case "SHIFT_ENTRY_DUPLICATE":
+      return 409;
+    case "EMPLOYEE_PROFILE_REQUIRED":
+      return 403;
     default:
       return 400;
   }
