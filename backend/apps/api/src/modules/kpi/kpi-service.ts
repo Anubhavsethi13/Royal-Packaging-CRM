@@ -1,4 +1,7 @@
 import type {
+  KpiDefinitionConfigDetailDTO,
+  KpiDefinitionConfigDTO,
+  ListKpiDefinitionsFilter,
   EmployeeKpiSummaryDTO,
   EmployeeKpiSummaryFilter,
   KpiDrillDownDTO,
@@ -13,6 +16,7 @@ import type { DatabaseConnection } from "@royal-packaging/db";
 import { sql } from "kysely";
 import { requireActiveEmployeeId } from "../shift-entries/shift-entry-service.js";
 import type { KpiDataSource, KpiSourceFilter } from "./kpi-data-source.js";
+import { KpiConfigurationReader } from "./kpi-configuration-reader.js";
 import { ShiftEntryKpiSource } from "./shift-entry-kpi-source.js";
 
 export interface KpiServiceConfig {
@@ -34,10 +38,26 @@ export interface ManagementKpiSummaryResult {
 export class KpiService {
   private readonly database: DatabaseConnection;
   private readonly shiftEntrySource: KpiDataSource;
+  private readonly configuration: KpiConfigurationReader;
 
   public constructor(config: KpiServiceConfig) {
     this.database = config.database;
     this.shiftEntrySource = config.shiftEntrySource ?? new ShiftEntryKpiSource(config.database);
+    this.configuration = new KpiConfigurationReader(config.database);
+  }
+
+  /** KPI definitions with their current targets (read-only configuration). */
+  public listDefinitions(
+    filter: ListKpiDefinitionsFilter,
+    page: { limit: number; offset: number },
+    now: Date = new Date()
+  ): Promise<{ items: KpiDefinitionConfigDTO[]; total: number }> {
+    return this.configuration.list(filter, page, now);
+  }
+
+  /** One definition with its full target/threshold history, or null. */
+  public getDefinition(id: string, now: Date = new Date()): Promise<KpiDefinitionConfigDetailDTO | null> {
+    return this.configuration.get(id, now);
   }
 
   /**

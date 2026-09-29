@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export * from "./reports.js";
 export * from "./shift-summary.js";
+export * from "./configuration.js";
 
 export const listKpiSnapshotsFilterSchema = z.object({
   kpi_code: z.string().trim().min(1).optional(),

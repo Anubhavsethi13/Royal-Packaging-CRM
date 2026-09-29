@@ -3,7 +3,7 @@ import type { TaskRecord, WarehouseOperationRecord, WarehouseOperationType } fro
 import { calculateTimerDurations, formatDuration } from './task-workflow';
 
 const operationByTaskType: Record<TaskRecord['type'], WarehouseOperationType> = {
-  Loading: 'DISPATCH', Unloading: 'RECEIVING', Putaway: 'STORAGE', Picking: 'PICKING', Wrapping: 'PACKING',
+  Loading: 'DISPATCH', Unloading: 'RECEIVING', Putaway: 'STORAGE', Picking: 'PICKING', Wrapping: 'PACKING', Other: 'OTHER',
 };
 
 export interface WarehouseFilters { search?: string; operation?: string; status?: string; employee?: string; warehouse?: string; }
@@ -14,7 +14,7 @@ export function toWarehouseOperation(task: TaskRecord): WarehouseOperationRecord
   const timing = calculateTimerDurations(task.timerEvents ?? []);
   return {
     id: `warehouse-${task.id}`, taskId: task.id, taskCode: task.taskCode, operation: operationByTaskType[task.type], employee: task.employee, employeeId: task.employeeId,
-    supervisor: task.supervisor, warehouse: task.source.split(' · ').slice(0, 2).join(' · '), status: task.v1Status ?? 'ASSIGNED',
+    supervisor: task.supervisor, warehouse: task.source.split(' · ').slice(0, 2).join(' · '), status: task.v1Status ?? (task.employeeId ? 'ASSIGNED' : 'UNASSIGNED'),
     boxesAssigned, boxesHandled, boxesRemaining: Math.max(0, boxesAssigned - boxesHandled), startedAt: task.startedAt, completedAt: task.completedAt, sla: task.sla, task,
     activeDurationSeconds: timing.activeSeconds, pausedDurationSeconds: timing.pausedSeconds, totalDurationSeconds: timing.totalSeconds,
     slaTargetSeconds: task.slaTargetSeconds, evidence: task.evidence ?? [], activity: task.activity ?? [],
@@ -37,7 +37,7 @@ export function warehouseSummary(operations: WarehouseOperationRecord[]) {
     boxesHandled: operations.reduce((total, operation) => total + operation.boxesHandled, 0),
     completed: operations.filter((operation) => operation.status === 'COMPLETED' || operation.status === 'VERIFIED').length,
     active: operations.filter((operation) => operation.status === 'STARTED' || operation.status === 'RESUMED').length,
-    pending: operations.filter((operation) => operation.status === 'ASSIGNED' || operation.status === 'ACCEPTED').length,
+    pending: operations.filter((operation) => operation.status === 'UNASSIGNED' || operation.status === 'ASSIGNED' || operation.status === 'ACCEPTED').length,
     paused: operations.filter((operation) => operation.status === 'PAUSED').length,
   };
 }

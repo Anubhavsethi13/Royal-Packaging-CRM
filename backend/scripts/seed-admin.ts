@@ -93,7 +93,13 @@ const PERMISSIONS: PermissionDef[] = [
 
   // Shift-entry KPI summaries
   { code: "kpi:read_own", name: "Read Own KPI Summary" },
-  { code: "kpi:read_all", name: "Read All Employee KPI Summaries" }
+  { code: "kpi:read_all", name: "Read All Employee KPI Summaries" },
+  { code: "kpi:read_config", name: "Read KPI Configuration" },
+
+  // Warehouse operations read model and locations
+  { code: "warehouse:read_operations", name: "Read Warehouse Operations" },
+  { code: "warehouse:read_all_operations", name: "Read All Warehouse Operations" },
+  { code: "location:read", name: "Read Locations" }
 ];
 
 const MANAGEMENT_PERMISSIONS = [
@@ -108,7 +114,8 @@ const MANAGEMENT_PERMISSIONS = [
   "incentive:read", "payroll:read", "payroll:write", "report:read", "report:execute",
   "audit:read", "dashboard:read", "kpi:read", "resync:read",
   "shift:create", "shift:read_own", "shift:read",
-  "kpi:read_own", "kpi:read_all"
+  "kpi:read_own", "kpi:read_all", "kpi:read_config",
+  "warehouse:read_operations", "warehouse:read_all_operations", "location:read"
 ];
 
 const EMPLOYEE_PERMISSIONS = [
@@ -120,7 +127,8 @@ const EMPLOYEE_PERMISSIONS = [
   "quality:record_photo", "quality:read_record", "quality:read_photos",
   "dashboard:read", "resync:read",
   "shift:create", "shift:read_own", "shift:read",
-  "kpi:read_own"
+  "kpi:read_own",
+  "warehouse:read_operations", "location:read"
 ];
 
 const AUDITOR_PERMISSIONS = [

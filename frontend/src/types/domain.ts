@@ -85,7 +85,7 @@ export interface EmployeeRecord {
 export interface TaskRecord {
   id: string;
   taskCode: string;
-  type: 'Loading' | 'Unloading' | 'Putaway' | 'Picking' | 'Wrapping';
+  type: 'Loading' | 'Unloading' | 'Putaway' | 'Picking' | 'Wrapping' | 'Other';
   priority: 'Low' | 'Normal' | 'High' | 'Urgent';
   source: string;
   destination: string;
@@ -129,7 +129,8 @@ export interface TaskRecord {
   activity?: TaskActivityEvent[];
   timerEvents?: TaskTimerEvent[];
   slaTargetSeconds?: number;
-  sla: 'On track' | 'At risk' | 'Breach risk';
+  /** 'Not defined' when the backend has no SLA target for the task. */
+  sla: 'On track' | 'At risk' | 'Breach risk' | 'Not defined';
 }
 
 export const LOADING_UNLOADING_OPERATION_TYPES = ['LOADING', 'UNLOADING'] as const;
@@ -147,7 +148,8 @@ export interface LoadingUnloadingOperationRecord {
   employee: string;
   employeeId?: string;
   supervisor?: string;
-  status: import('./v1').TaskStatusV1;
+  /** UNASSIGNED is a display state for tasks the backend has not assigned yet (no V1 lifecycle equivalent). */
+  status: import('./v1').TaskStatusV1 | 'UNASSIGNED';
   boxesAssigned: number;
   boxesHandled: number;
   boxesRemaining: number;
@@ -163,7 +165,7 @@ export interface LoadingUnloadingOperationRecord {
   task: TaskRecord;
 }
 
-export const WAREHOUSE_OPERATION_TYPES = ['RECEIVING', 'STORAGE', 'PICKING', 'PACKING', 'DISPATCH'] as const;
+export const WAREHOUSE_OPERATION_TYPES = ['RECEIVING', 'STORAGE', 'PICKING', 'PACKING', 'DISPATCH', 'OTHER'] as const;
 export type WarehouseOperationType = (typeof WAREHOUSE_OPERATION_TYPES)[number];
 
 // This is a task read-model, not a second warehouse data store. It keeps every warehouse view aligned with F6 task state.
@@ -176,7 +178,8 @@ export interface WarehouseOperationRecord {
   employeeId?: string;
   supervisor?: string;
   warehouse: string;
-  status: import('./v1').TaskStatusV1;
+  /** UNASSIGNED is a display state for tasks the backend has not assigned yet (no V1 lifecycle equivalent). */
+  status: import('./v1').TaskStatusV1 | 'UNASSIGNED';
   boxesAssigned: number;
   boxesHandled: number;
   boxesRemaining: number;

@@ -1,6 +1,7 @@
 import {
   buildPageMeta,
   employeeKpiSummaryFilterSchema,
+  listKpiDefinitionsFilterSchema,
   managementKpiSummaryFilterSchema
 } from "@royal-packaging/contracts";
 import { z } from "zod";
@@ -13,7 +14,7 @@ import { BadRequestError, NotFoundError, UnauthorizedError } from "../middleware
 import type { AuthService } from "../modules/identity/auth-service.js";
 import type { KpiService } from "../modules/kpi/kpi-service.js";
 import type { ApiContext, Router } from "../router.js";
-import { parsePagination, sendJson, withCamelCaseMirror } from "../utils/http-utils.js";
+import { parsePagination, sendJson, sendList, withCamelCaseMirror } from "../utils/http-utils.js";
 
 const uuidSchema = z.string().uuid({ message: "Must be a valid UUID" });
 
@@ -63,6 +64,31 @@ export function registerKpiRoutes(
       data: withCamelCaseMirror(result.summary),
       meta: buildPageMeta(pagination.page, pagination.pageSize, result.totalEmployees)
     });
+  });
+
+  // GET /kpi/definitions - read-only KPI configuration (definitions + current targets).
+  router.get("/kpi/definitions", auth, authz("kpi:read_config"), async (ctx: ApiContext) => {
+    const pagination = parsePagination(ctx.query);
+    const filter = listKpiDefinitionsFilterSchema.parse({
+      search: ctx.query.get("search") ?? undefined,
+      pillar: ctx.query.get("pillar") ?? undefined,
+      status: ctx.query.get("status") ?? undefined
+    });
+    const page = await kpiService.listDefinitions(filter, { limit: pagination.pageSize, offset: pagination.offset });
+    sendList(ctx.res, withCamelCaseMirror(page.items), pagination, page.total);
+  });
+
+  // GET /kpi/definitions/:id - one definition with its target/threshold history.
+  router.get("/kpi/definitions/:id", auth, authz("kpi:read_config"), async (ctx: ApiContext) => {
+    const id = ctx.params.id;
+    if (!id || !uuidSchema.safeParse(id).success) {
+      throw new BadRequestError("Invalid KPI definition ID format");
+    }
+    const definition = await kpiService.getDefinition(id);
+    if (!definition) {
+      throw new NotFoundError(`KPI definition with ID '${id}' was not found`);
+    }
+    sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(definition) });
   });
 
   // GET /kpis

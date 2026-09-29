@@ -5,25 +5,45 @@ import { routes } from '../app/routes';
 import { applyTaskPreviewAction, type TaskPreviewAction } from '../mock/task-preview';
 import type { EmployeeRecord, TaskRecord } from '../types/domain';
 import { useRepositories } from '../state/repositories';
+import { useAuth } from '../state/auth';
+import { ApiError } from '../api/client';
+import { describeWarehouseError, useWarehouseGateway, WAREHOUSE_PAGE_SIZE, MAX_WAREHOUSE_PAGES } from './warehouse-gateway';
 import { Alert, Badge, Button, Card, DataTable, EmptyState, ErrorState, FilterBar, LoadingState, MetricCard, PageHeader, SearchField, Select, StatusBadge } from '../components/ui';
 import { TaskWorkflowPanel } from './TaskWorkflowPanel';
 import { filterWarehouseOperations, warehouseDuration, warehouseSummary, type WarehouseFilters } from './warehouse-data';
 
-const v1Statuses = ['ASSIGNED', 'ACCEPTED', 'STARTED', 'PAUSED', 'RESUMED', 'COMPLETED', 'VERIFIED', 'REJECTED', 'REASSIGNED', 'CANCELLED', 'REOPENED', 'FAILED'];
-const operationTypes = ['RECEIVING', 'STORAGE', 'PICKING', 'PACKING', 'DISPATCH'];
+const v1Statuses = ['UNASSIGNED', 'ASSIGNED', 'ACCEPTED', 'STARTED', 'PAUSED', 'RESUMED', 'COMPLETED', 'VERIFIED', 'REJECTED', 'REASSIGNED', 'CANCELLED', 'REOPENED', 'FAILED'];
+const operationTypes = ['RECEIVING', 'STORAGE', 'PICKING', 'PACKING', 'DISPATCH', 'OTHER'];
 const pathFor = (id: string) => routes.warehouseDetail.replace(':taskId', id);
 
 function useWarehouseTasks() {
-  const { mode, repositories } = useRepositories();
+  const { mode } = useRepositories();
+  const { expireSession } = useAuth();
+  const gateway = useWarehouseGateway();
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [total, setTotal] = useState(0);
+  const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { let active = true; setLoading(true); setError(null); void repositories.tasks.list({ page: 1, pageSize: Number.MAX_SAFE_INTEGER }).then((result) => { if (active) { setTasks(result.items); setLoading(false); } }).catch((cause: unknown) => { if (active) { setError(cause instanceof Error ? cause.message : 'Warehouse tasks could not be loaded.'); setLoading(false); } }); return () => { active = false; }; }, [repositories.tasks]);
-  return { mode, repositories, tasks, setTasks, loading, error };
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void gateway.listTasks().then((result) => {
+      if (active) { setTasks(result.tasks); setTotal(result.total); setTruncated(result.truncated); setLoading(false); }
+    }).catch((cause: unknown) => {
+      if (!active) return;
+      if (cause instanceof ApiError && cause.status === 401) expireSession();
+      setError(describeWarehouseError(cause, 'Warehouse tasks could not be loaded.'));
+      setLoading(false);
+    });
+    return () => { active = false; };
+  }, [expireSession, gateway]);
+  return { mode, tasks, total, truncated, loading, error };
 }
 
 export function WarehouseDashboardPage() {
-  const { mode, tasks, loading, error } = useWarehouseTasks();
+  const { mode, tasks, total, truncated, loading, error } = useWarehouseTasks();
   const [filters, setFilters] = useState<WarehouseFilters>({ operation: 'all', status: 'all', employee: 'all', warehouse: 'all' });
   const operations = useMemo(() => filterWarehouseOperations(tasks, filters), [filters, tasks]);
   const summary = warehouseSummary(operations);
@@ -31,17 +51,19 @@ export function WarehouseDashboardPage() {
   const warehouses = [...new Set(operations.map((operation) => operation.warehouse))].sort();
   if (loading) return <LoadingState label="Loading warehouse operations" />;
   if (error) return <ErrorState title="Warehouse operations could not be loaded" description={error} />;
-  return <><PageHeader title="Warehouse operations" description="Track BOX handling, task state, people, and operational timing from the shared task workflow." actions={<Badge tone={mode === 'mock' ? 'info' : 'neutral'}>{mode === 'mock' ? 'Mock operations' : 'API readiness'}</Badge>} /><Alert tone="info" title="Operational preview">Warehouse values are projected from the shared task repository. Server-side inventory movement and authorization remain backend-authoritative.</Alert><div className="metric-grid"><MetricCard label="Boxes handled" value={`${summary.boxesHandled} BOX`} detail="Selected warehouse scope" accent="indigo" icon={<Boxes size={16} />} /><MetricCard label="Tasks completed" value={String(summary.completed)} detail="Completed or verified" accent="green" icon={<CheckCircle2 size={16} />} /><MetricCard label="Active tasks" value={String(summary.active)} detail="Started or resumed" accent="amber" icon={<Clock3 size={16} />} /><MetricCard label="Pending tasks" value={String(summary.pending)} detail={`${summary.paused} paused`} accent="slate" icon={<PauseCircle size={16} />} /></div><FilterBar resultLabel={`${operations.length} warehouse tasks`}><SearchField placeholder="Search task, operation, employee, or warehouse" value={filters.search} onChange={(search) => setFilters((current) => ({ ...current, search }))} /><Select value={filters.operation} onChange={(event) => setFilters((current) => ({ ...current, operation: event.target.value }))} aria-label="Filter warehouse operation"><option value="all">All operations</option>{operationTypes.map((operation) => <option key={operation}>{operation}</option>)}</Select><Select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))} aria-label="Filter warehouse status"><option value="all">All states</option>{v1Statuses.map((status) => <option key={status}>{status}</option>)}</Select><Select value={filters.employee} onChange={(event) => setFilters((current) => ({ ...current, employee: event.target.value }))} aria-label="Filter warehouse employee"><option value="all">All employees</option>{employees.map((employee) => <option key={employee}>{employee}</option>)}</Select><Select value={filters.warehouse} onChange={(event) => setFilters((current) => ({ ...current, warehouse: event.target.value }))} aria-label="Filter warehouse depot"><option value="all">All warehouses</option>{warehouses.map((warehouse) => <option key={warehouse}>{warehouse}</option>)}</Select><Button variant="ghost" onClick={() => setFilters({ operation: 'all', status: 'all', employee: 'all', warehouse: 'all' })}>Clear filters</Button></FilterBar><Card><div className="section-heading"><h2>Warehouse task register</h2><Badge tone="neutral">BOX only</Badge></div><DataTable caption="Warehouse operational task directory" headers={['Task', 'Operation', 'Employee', 'Warehouse', 'Status', 'Boxes', 'Started', 'Completed', 'Time', 'SLA']} rows={operations.map((operation) => [<Link key={operation.taskId} className="table-link mono" to={pathFor(operation.taskId)}>{operation.taskCode}</Link>, operation.operation, <span>{operation.employee}<small className="table-sub">{operation.supervisor ? `Supervisor: ${operation.supervisor}` : 'No supervisor'}</small></span>, operation.warehouse, <StatusBadge status={operation.status} />, <span className="mono">{operation.boxesHandled} / {operation.boxesAssigned} BOX</span>, operation.startedAt ? new Date(operation.startedAt).toLocaleString() : '—', operation.completedAt ? new Date(operation.completedAt).toLocaleString() : '—', warehouseDuration(operation.task), <StatusBadge status={operation.sla} />])} empty={<EmptyState icon={PackageCheck} title="No warehouse tasks match" description="Adjust the current filters or clear them to return to the operational queue." />} /></Card></>;
+  return <><PageHeader title="Warehouse operations" description="Track BOX handling, task state, people, and operational timing from the shared task workflow." actions={<Badge tone={mode === 'mock' ? 'info' : 'neutral'}>{mode === 'mock' ? 'Mock operations' : 'Live data'}</Badge>} />{mode === 'mock' ? <Alert tone="info" title="Operational preview">Warehouse values are projected from the shared task repository. Server-side inventory movement and authorization remain backend-authoritative.</Alert> : <Alert tone="info" title="Live task data">Read-only view of backend tasks, assignments, and task events, limited to what your role may see. SLA targets are not defined in the system yet, and task actions stay on the task workflow.</Alert>}{truncated && <Alert tone="warning" title="Directory truncated">Showing the newest {MAX_WAREHOUSE_PAGES * WAREHOUSE_PAGE_SIZE} of {total} tasks. Totals and filters cover the loaded tasks only.</Alert>}<div className="metric-grid"><MetricCard label="Boxes handled" value={`${summary.boxesHandled} BOX`} detail="Selected warehouse scope" accent="indigo" icon={<Boxes size={16} />} /><MetricCard label="Tasks completed" value={String(summary.completed)} detail="Completed or verified" accent="green" icon={<CheckCircle2 size={16} />} /><MetricCard label="Active tasks" value={String(summary.active)} detail="Started or resumed" accent="amber" icon={<Clock3 size={16} />} /><MetricCard label="Pending tasks" value={String(summary.pending)} detail={`${summary.paused} paused`} accent="slate" icon={<PauseCircle size={16} />} /></div><FilterBar resultLabel={`${operations.length} warehouse tasks`}><SearchField placeholder="Search task, operation, employee, or warehouse" value={filters.search} onChange={(search) => setFilters((current) => ({ ...current, search }))} /><Select value={filters.operation} onChange={(event) => setFilters((current) => ({ ...current, operation: event.target.value }))} aria-label="Filter warehouse operation"><option value="all">All operations</option>{operationTypes.map((operation) => <option key={operation}>{operation}</option>)}</Select><Select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))} aria-label="Filter warehouse status"><option value="all">All states</option>{v1Statuses.map((status) => <option key={status}>{status}</option>)}</Select><Select value={filters.employee} onChange={(event) => setFilters((current) => ({ ...current, employee: event.target.value }))} aria-label="Filter warehouse employee"><option value="all">All employees</option>{employees.map((employee) => <option key={employee}>{employee}</option>)}</Select><Select value={filters.warehouse} onChange={(event) => setFilters((current) => ({ ...current, warehouse: event.target.value }))} aria-label="Filter warehouse depot"><option value="all">All warehouses</option>{warehouses.map((warehouse) => <option key={warehouse}>{warehouse}</option>)}</Select><Button variant="ghost" onClick={() => setFilters({ operation: 'all', status: 'all', employee: 'all', warehouse: 'all' })}>Clear filters</Button></FilterBar><Card><div className="section-heading"><h2>Warehouse task register</h2><Badge tone="neutral">BOX only</Badge></div><DataTable caption="Warehouse operational task directory" headers={['Task', 'Operation', 'Employee', 'Warehouse', 'Status', 'Boxes', 'Started', 'Completed', 'Time', 'SLA']} rows={operations.map((operation) => [<Link key={operation.taskId} className="table-link mono" to={pathFor(operation.taskId)}>{operation.taskCode}</Link>, operation.operation, <span>{operation.employee}<small className="table-sub">{operation.supervisor ? `Supervisor: ${operation.supervisor}` : 'No supervisor'}</small></span>, operation.warehouse, <StatusBadge status={operation.status} />, <span className="mono">{operation.boxesHandled} / {operation.boxesAssigned} BOX</span>, operation.startedAt ? new Date(operation.startedAt).toLocaleString() : '—', operation.completedAt ? new Date(operation.completedAt).toLocaleString() : '—', warehouseDuration(operation.task), <StatusBadge status={operation.sla} />])} empty={<EmptyState icon={PackageCheck} title="No warehouse tasks match" description="Adjust the current filters or clear them to return to the operational queue." />} /></Card></>;
 }
 
 export function WarehouseTaskDetailPage() {
   const { taskId } = useParams();
   const { mode, repositories } = useRepositories();
+  const { expireSession } = useAuth();
+  const gateway = useWarehouseGateway();
   const [task, setTask] = useState<TaskRecord | null>(null);
   const [employees, setEmployees] = useState<EmployeeRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { let active = true; if (!taskId) return undefined; setLoading(true); void Promise.all([repositories.tasks.getById(taskId), repositories.employees.list({ page: 1, pageSize: Number.MAX_SAFE_INTEGER })]).then(([record, people]) => { if (active) { setTask(record ?? null); setEmployees(people.items); setLoading(false); } }).catch((cause: unknown) => { if (active) { setError(cause instanceof Error ? cause.message : 'Warehouse task could not be loaded.'); setLoading(false); } }); return () => { active = false; }; }, [repositories.employees, repositories.tasks, taskId]);
+  useEffect(() => { let active = true; if (!taskId) return undefined; setLoading(true); setError(null); void Promise.all([gateway.getTask(taskId), mode === 'mock' ? repositories.employees.list({ page: 1, pageSize: Number.MAX_SAFE_INTEGER }).then((people) => people.items) : Promise.resolve<EmployeeRecord[]>([])]).then(([record, people]) => { if (active) { setTask(record ?? null); setEmployees(people); setLoading(false); } }).catch((cause: unknown) => { if (active) { if (cause instanceof ApiError && cause.status === 401) expireSession(); setError(describeWarehouseError(cause, 'Warehouse task could not be loaded.')); setLoading(false); } }); return () => { active = false; }; }, [expireSession, gateway, mode, repositories.employees, taskId]);
   if (loading) return <LoadingState label="Loading warehouse task" />;
   if (error) return <ErrorState title="Warehouse task could not be loaded" description={error} />;
   if (!task) return <EmptyState icon={PackageCheck} title="Warehouse task not found" description="The selected warehouse task is not available in the current data source." action={<Link className="button button-primary" to={routes.warehouse}>Back to warehouse operations</Link>} />;

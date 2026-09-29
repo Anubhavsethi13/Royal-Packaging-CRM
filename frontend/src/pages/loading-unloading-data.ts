@@ -26,7 +26,9 @@ export function classifyLoadingUnloadingTask(task: TaskRecord): LoadingUnloading
   return undefined;
 }
 
-function operationalSlaStatus(task: TaskRecord): OperationalSlaStatus {
+export function operationalSlaStatus(task: TaskRecord): OperationalSlaStatus {
+  // Without an SLA target there is nothing to meet or breach (API tasks: the schema has no SLA targets).
+  if (task.sla === 'Not defined') return 'NOT_APPLICABLE';
   const status = task.v1Status;
   if (task.sla === 'Breach risk') return 'BREACHED';
   if (task.sla === 'At risk') return 'AT_RISK';
@@ -44,7 +46,7 @@ export function toLoadingUnloadingOperation(task: TaskRecord): LoadingUnloadingO
   const timing = calculateTimerDurations(task.timerEvents ?? []);
   return {
     id: `loading-unloading-${task.id}`, taskId: task.id, taskCode: task.taskCode, operationType, warehouse: task.source.split(' · ').slice(0, 2).join(' · '), employee: task.employee,
-    supervisor: task.supervisor, employeeId: task.employeeId, status: task.v1Status ?? 'ASSIGNED', boxesAssigned, boxesHandled, boxesRemaining: Math.max(0, boxesAssigned - boxesHandled),
+    supervisor: task.supervisor, employeeId: task.employeeId, status: task.v1Status ?? (task.employeeId ? 'ASSIGNED' : 'UNASSIGNED'), boxesAssigned, boxesHandled, boxesRemaining: Math.max(0, boxesAssigned - boxesHandled),
     startedAt: task.startedAt, completedAt: task.completedAt, activeDurationSeconds: timing.activeSeconds, pausedDurationSeconds: timing.pausedSeconds, totalDurationSeconds: timing.totalSeconds,
     slaTargetSeconds: task.slaTargetSeconds, slaStatus: operationalSlaStatus(task), evidence: task.evidence ?? [], activity: task.activity ?? [], task,
   };

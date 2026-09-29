@@ -302,7 +302,23 @@ export class DatabaseRBACAuthorizationPolicy implements AuthorizationPolicy {
       // aggregated multi-employee performance is management tier only.
       case "kpi:read_own":
         return isApprovedRole;
+
+      // 16. Warehouse operations read model and locations (read-only).
+      // Every approved role may open the operations directory, but the
+      // route narrows it to the caller's own assigned tasks unless the
+      // caller also holds `warehouse:read_all_operations` (management tier;
+      // depot/team scoping does not exist, so management sees all depots,
+      // consistent with every other read in this policy).
+      case "warehouse:read_operations":
+      case "location:read":
+        return isApprovedRole;
+      case "warehouse:read_all_operations":
+        return isManagementTier;
       case "kpi:read_all":
+        return isManagementTier;
+      // KPI configuration (definitions, targets, thresholds) is a management
+      // read; there is no depot/team scope, so it covers every warehouse.
+      case "kpi:read_config":
         return isManagementTier;
 
       case "shift:read": {
