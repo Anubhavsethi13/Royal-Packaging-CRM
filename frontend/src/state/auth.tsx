@@ -62,19 +62,22 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-export const mockRoles: Role[] = ['SUPER_ADMIN', 'ADMIN', 'SUPERVISOR', 'EMPLOYEE'];
+export const mockRoles: Role[] = ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT', 'SUPERVISOR', 'EMPLOYEE'];
 
 function configuredMockRole(): Role {
   const role = import.meta.env.VITE_MOCK_ROLE;
   return mockRoles.includes(role as Role) ? role as Role : 'SUPER_ADMIN';
 }
 
+// Missing or unrecognised backend roles get the least-privileged display role
+// ("Others"); never an administrative one. The backend enforces authorization.
 export function normalizeRole(rawRole?: string | null): Role {
-  if (!rawRole) return 'ADMIN';
+  if (!rawRole) return 'EMPLOYEE';
   const upper = rawRole.toUpperCase();
   if (upper === 'MANAGER') return 'SUPERVISOR';
+  if (upper === 'MAIN_ADMIN') return 'ADMIN';
   if (mockRoles.includes(upper as Role)) return upper as Role;
-  return 'ADMIN';
+  return 'EMPLOYEE';
 }
 
 export function mapApiUserToSessionState(user: ApiUserDTO): SessionState {

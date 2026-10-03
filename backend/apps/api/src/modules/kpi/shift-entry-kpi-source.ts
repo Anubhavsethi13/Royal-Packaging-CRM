@@ -185,6 +185,9 @@ export class ShiftEntryKpiSource implements KpiDataSource {
     if (filter.employeeId) {
       query = query.where("shift_entries.employee_id", "=", filter.employeeId);
     }
+    if (filter.employeeDepotId) {
+      query = query.where("shift_entries.employee_id", "in", this.database.selectFrom("employees").select("id").where("depot_id", "=", filter.employeeDepotId));
+    }
     if (filter.from) {
       query = query.where(sql<boolean>`shift_entries.work_date >= ${filter.from}::date`);
     }

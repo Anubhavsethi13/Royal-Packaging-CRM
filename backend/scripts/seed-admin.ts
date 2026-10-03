@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { loadProjectEnv } from "@royal-packaging/config";
 import { checkDatabaseHealth, createDatabase, destroyDatabase } from "@royal-packaging/db";
 import { hashPassword } from "../apps/api/src/modules/identity/password.js";
+import { seedKpiDefinitions, UNSEEDED_KPI_CODES } from "./kpi-definition-seed.js";
 
 interface RoleDef {
   code: string;
@@ -17,6 +18,7 @@ interface PermissionDef {
 const ROLES: RoleDef[] = [
   { code: "SUPER_ADMIN", name: "Super Administrator" },
   { code: "ADMIN", name: "Administrator" },
+  { code: "ACCOUNTANT", name: "Accountant" },
   { code: "SUPERVISOR", name: "Warehouse Supervisor" },
   { code: "MANAGER", name: "Operations Manager" },
   { code: "EMPLOYEE", name: "Warehouse Operator" },
@@ -96,11 +98,21 @@ const PERMISSIONS: PermissionDef[] = [
   { code: "kpi:read_all", name: "Read All Employee KPI Summaries" },
   { code: "kpi:read_config", name: "Read KPI Configuration" },
   { code: "kpi:read_results", name: "Read KPI Results" },
+  { code: "kpi:read_depot", name: "Read Depot KPI Dashboard" },
 
   // Warehouse operations read model and locations
   { code: "warehouse:read_operations", name: "Read Warehouse Operations" },
   { code: "warehouse:read_all_operations", name: "Read All Warehouse Operations" },
-  { code: "location:read", name: "Read Locations" }
+  { code: "location:read", name: "Read Locations" },
+
+  // Supervisor daily depot reports
+  { code: "daily_report:read", name: "Read Daily Depot Reports" },
+  { code: "daily_report:read_all", name: "Read Daily Reports For All Depots" },
+  { code: "daily_report:write", name: "Create/Update/Submit Daily Depot Reports" },
+  { code: "daily_report:write_all", name: "Write Daily Reports For Any Depot" },
+
+  // Administration (users, roles, permissions, scopes, settings): Super Admin and Admin
+  { code: "settings:read", name: "Open Administration" }
 ];
 
 const MANAGEMENT_PERMISSIONS = [
@@ -112,11 +124,12 @@ const MANAGEMENT_PERMISSIONS = [
   "inventory:read_catalog", "inventory:read_balances", "inventory:read_movement", "inventory:move",
   "warehouse:scan", "warehouse:read_tasks", "warehouse:read_route",
   "quality:inspect", "quality:record_photo", "quality:read_record", "quality:read_photos", "quality:read_history",
-  "incentive:read", "payroll:read", "payroll:write", "report:read", "report:execute",
+  "report:read", "report:execute",
   "audit:read", "dashboard:read", "kpi:read", "resync:read",
   "shift:create", "shift:read_own", "shift:read",
-  "kpi:read_own", "kpi:read_all", "kpi:read_config", "kpi:read_results",
-  "warehouse:read_operations", "warehouse:read_all_operations", "location:read"
+  "kpi:read_own", "kpi:read_all", "kpi:read_results", "kpi:read_depot",
+  "warehouse:read_operations", "warehouse:read_all_operations", "location:read",
+  "daily_report:read", "daily_report:write"
 ];
 
 const EMPLOYEE_PERMISSIONS = [
@@ -130,6 +143,33 @@ const EMPLOYEE_PERMISSIONS = [
   "shift:create", "shift:read_own", "shift:read",
   "kpi:read_own", "kpi:read_results",
   "warehouse:read_operations", "location:read"
+];
+
+/**
+ * Incentives and payroll (payroll entries are incentive amounts) are Super
+ * Admin only. These permissions are bound to SUPER_ADMIN alone, and the seed
+ * revokes them from every other role so existing databases are corrected.
+ */
+export const SUPER_ADMIN_ONLY_PERMISSIONS: readonly string[] = [
+  "incentive:read", "incentive:record_kot", "incentive:record_penalty", "incentive:calculate", "incentive:approve",
+  "payroll:read", "payroll:write", "payroll:approve", "financial:approve"
+];
+
+/** Permissions only the listed roles may hold; the seed revokes them from every other role. */
+const RESTRICTED_PERMISSIONS: ReadonlyArray<{ label: string; permissions: readonly string[]; allowedRoles: readonly string[] }> = [
+  { label: "Incentives and payroll (Super Admin only)", permissions: SUPER_ADMIN_ONLY_PERMISSIONS, allowedRoles: ["SUPER_ADMIN"] },
+  { label: "KPI configuration (Super Admin and Admin only)", permissions: ["kpi:read_config"], allowedRoles: ["SUPER_ADMIN", "ADMIN"] }
+];
+/** Read-only reporting role: dashboard, reports, KPI results, warehouse/task/employee reads, audit. */
+const ACCOUNTANT_PERMISSIONS = [
+  "client:read", "order:read", "employee:read",
+  "task:read", "task:read_summary", "task:read_assignments", "task:read_events",
+  "inventory:read_catalog", "inventory:read_balances", "inventory:read_movement",
+  "warehouse:read_tasks", "warehouse:read_route", "warehouse:read_operations", "warehouse:read_all_operations", "location:read",
+  "quality:read_record", "quality:read_photos", "quality:read_history",
+  "dashboard:read", "kpi:read", "kpi:read_all", "kpi:read_results", "kpi:read_depot",
+  "report:read", "report:execute", "audit:read",
+  "daily_report:read", "daily_report:read_all"
 ];
 
 const AUDITOR_PERMISSIONS = [
@@ -300,7 +340,8 @@ export async function seedDatabase(): Promise<void> {
     // 4. Map role permissions idempotently in `access_role_permissions`
     const roleBindings: Array<{ roleCode: string; permissions: string[] }> = [
       { roleCode: "SUPER_ADMIN", permissions: PERMISSIONS.map((p) => p.code) },
-      { roleCode: "ADMIN", permissions: PERMISSIONS.filter((p) => !["incentive:approve", "payroll:approve", "financial:approve"].includes(p.code)).map((p) => p.code) },
+      { roleCode: "ADMIN", permissions: PERMISSIONS.filter((p) => !SUPER_ADMIN_ONLY_PERMISSIONS.includes(p.code)).map((p) => p.code) },
+      { roleCode: "ACCOUNTANT", permissions: ACCOUNTANT_PERMISSIONS },
       { roleCode: "SUPERVISOR", permissions: MANAGEMENT_PERMISSIONS },
       { roleCode: "MANAGER", permissions: MANAGEMENT_PERMISSIONS },
       { roleCode: "EMPLOYEE", permissions: EMPLOYEE_PERMISSIONS },
@@ -346,6 +387,20 @@ export async function seedDatabase(): Promise<void> {
     }
     console.log(`[SEED] Role-permission mappings up to date (${newBindingsCount} new bindings added).`);
 
+    // 4b. Revoke restricted permissions from roles that may no longer hold them (idempotent),
+    // so databases seeded under earlier rules are corrected too.
+    for (const restriction of RESTRICTED_PERMISSIONS) {
+      const keepRoleIds = restriction.allowedRoles.map((code) => roleIdMap.get(code)).filter((id): id is string => Boolean(id));
+      const permissionIds = restriction.permissions.map((code) => permissionIdMap.get(code)).filter((id): id is string => Boolean(id));
+      if (keepRoleIds.length === 0 || permissionIds.length === 0) continue;
+      const revoked = await database
+        .deleteFrom("access_role_permissions")
+        .where("permission_id", "in", permissionIds)
+        .where("role_id", "not in", keepRoleIds)
+        .executeTakeFirst();
+      console.log(`[SEED] ${restriction.label}: revoked ${Number(revoked.numDeletedRows)} binding(s) from roles other than ${restriction.allowedRoles.join(", ")}.`);
+    }
+
     // 5. Assign roles to seeded users
     for (const [email, { id: userId, roles }] of userMap.entries()) {
       for (const roleCode of roles) {
@@ -374,6 +429,10 @@ export async function seedDatabase(): Promise<void> {
         }
       }
     }
+
+    // 5. V1 KPI definitions (idempotent; never modifies existing definitions; no targets).
+    const kpiSeed = await seedKpiDefinitions(database);
+    console.log(`[SEED] KPI definitions: ${kpiSeed.inserted.length} inserted, ${kpiSeed.skipped.length} already present. Not seeded (unapproved rules): ${UNSEEDED_KPI_CODES.join(", ")}.`);
 
     console.log("[INFO] Administrative database seed completed successfully.");
   } finally {

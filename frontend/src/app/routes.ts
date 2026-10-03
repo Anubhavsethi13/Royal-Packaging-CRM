@@ -9,6 +9,8 @@ export const routes = {
   locations: '/locations',
   loadingUnloading: '/loading-unloading',
   loadingUnloadingDetail: '/loading-unloading/:taskId',
+  dailyReports: '/daily-reports',
+  depotKpi: '/depot-kpi',
   tasks: '/tasks',
   taskDetail: '/tasks/:taskId',
   operations: '/operations',

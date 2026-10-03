@@ -19,14 +19,27 @@ export function hashSessionToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+export type SessionCookieSameSite = "lax" | "strict" | "none";
+
 export interface SessionCookieConfig {
   readonly cookieName?: string;
   readonly isProduction?: boolean;
   readonly ttlHours?: number;
+  /** Defaults to "lax" (same-origin deployments). */
+  readonly sameSite?: SessionCookieSameSite;
 }
 
 /**
- * Builds HTTP-only, SameSite=Lax cookie options for session identifiers.
+ * `Secure` is required in production, and always for SameSite=None (browsers
+ * reject SameSite=None cookies without it).
+ */
+export function sessionCookieIsSecure(isProduction: boolean, sameSite: SessionCookieSameSite): boolean {
+  return isProduction || sameSite === "none";
+}
+
+/**
+ * Builds HTTP-only, host-only (no Domain), Path=/ cookie options for session
+ * identifiers with the configured SameSite policy.
  */
 export function createSessionCookie(
   sessionToken: string,
@@ -35,14 +48,15 @@ export function createSessionCookie(
 ): SessionCookieOptions {
   const name = config.cookieName ?? DEFAULT_SESSION_COOKIE_NAME;
   const isProduction = config.isProduction ?? false;
+  const sameSite = config.sameSite ?? "lax";
   const maxAge = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
 
   return {
     name,
     value: sessionToken,
     httpOnly: true,
-    secure: isProduction,
-    sameSite: "lax",
+    secure: sessionCookieIsSecure(isProduction, sameSite),
+    sameSite,
     path: "/",
     expires: expiresAt,
     maxAge

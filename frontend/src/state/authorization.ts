@@ -73,6 +73,9 @@ const backendPermissionMap: Record<string, string[]> = {
   'WAREHOUSE:VIEW': ['warehouse:read_operations', 'warehouse:read_tasks', 'warehouse:read_route', 'warehouse:scan'],
   'LOCATIONS:VIEW': ['location:read', 'warehouse:read_tasks', 'warehouse:read_route'],
   'LOADING_UNLOADING:VIEW': ['warehouse:read_tasks', 'task:execute_movement'],
+  'DAILY_REPORTS:VIEW': ['daily_report:read'],
+  'DAILY_REPORTS:CREATE': ['daily_report:write'],
+  'DAILY_REPORTS:EDIT': ['daily_report:write'],
   'EMPLOYEES:VIEW': ['employee:read'],
   'EMPLOYEES:CREATE': ['employee:write'],
   'EMPLOYEES:EDIT': ['employee:write'],
@@ -80,6 +83,8 @@ const backendPermissionMap: Record<string, string[]> = {
   'SHIFTS:VIEW': ['shift:read_own'],
   'SHIFTS:CREATE': ['shift:create'],
   'KPI:VIEW': ['kpi:read'],
+  'KPI_CONFIG:VIEW': ['kpi:read_config'],
+  'DEPOT_KPI:VIEW': ['kpi:read_depot'],
   'KPI:EDIT': ['kpi:write'],
   'KPI:VERIFY': ['kpi:verify'],
   'INCENTIVES:VIEW': ['incentive:read'],
@@ -89,12 +94,28 @@ const backendPermissionMap: Record<string, string[]> = {
   'REPORTS:VIEW': ['report:read'],
   'REPORTS:EXPORT': ['report:execute'],
   'AUDIT:VIEW': ['audit:read'],
-  'ACCESS_CONTROL:VIEW': ['audit:read', 'settings:read'],
-  'SETTINGS:VIEW': ['settings:read', 'audit:read'],
+  // Administration is its own permission: audit visibility must not open users, roles or settings.
+  'ACCESS_CONTROL:VIEW': ['settings:read'],
+  'SETTINGS:VIEW': ['settings:read'],
 };
+
+// Incentives and payroll (payroll entries are incentive amounts) are Super Admin only.
+// No permission string can grant them to another role; the backend enforces the same rule.
+export const SUPER_ADMIN_ONLY_MODULES: readonly string[] = ['INCENTIVES', 'PAYROLL'];
+const SUPER_ADMIN_ONLY_PERMISSION_PREFIXES: readonly string[] = ['incentive:', 'payroll:', 'financial:', 'view:finance'];
+
+export function isSuperAdminOnly(requirement: PermissionRequirement): boolean {
+  if (typeof requirement === 'string') {
+    const upper = requirement.toUpperCase();
+    return SUPER_ADMIN_ONLY_MODULES.some((module) => upper.startsWith(`${module}:`))
+      || SUPER_ADMIN_ONLY_PERMISSION_PREFIXES.some((prefix) => requirement.toLowerCase().startsWith(prefix));
+  }
+  return SUPER_ADMIN_ONLY_MODULES.includes(requirement.module.toUpperCase());
+}
 
 export function hasPermission(subject: AuthorizationSubject | null | undefined, requirement: PermissionRequirement): boolean {
   if (!subject) return false;
+  if (isSuperAdminOnly(requirement)) return hasRole(subject, 'SUPER_ADMIN');
   if (hasRole(subject, 'SUPER_ADMIN')) return true;
   const permissions = subject.permissions ?? [];
   if (permissions.includes('*')) return true;
@@ -134,19 +155,24 @@ export function rolePermissions(role: Role): string[] {
     ADMIN: [
       ['DASHBOARD', 'VIEW'], ['SHIFTS', 'VIEW'], ['SHIFTS', 'CREATE'], ['KPI_SUMMARY', 'VIEW'], ['EMPLOYEES', 'VIEW'], ['EMPLOYEES', 'CREATE'], ['EMPLOYEES', 'EDIT'],
       ['TASKS', 'VIEW'], ['TASKS', 'ASSIGN'], ['TASKS', 'ACCEPT'], ['TASKS', 'START'], ['TASKS', 'PAUSE'], ['TASKS', 'RESUME'], ['TASKS', 'COMPLETE'], ['TASKS', 'REOPEN'], ['TASKS', 'CANCEL'], ['TASKS', 'VERIFY'],
-      ['WAREHOUSE', 'VIEW'], ['LOADING_UNLOADING', 'VIEW'], ['KPI', 'VIEW'], ['KPI', 'VERIFY'], ['INCENTIVES', 'VIEW'], ['INCENTIVES', 'APPROVE'], ['PAYROLL', 'VIEW'], ['PAYROLL', 'APPROVE'], ['REPORTS', 'VIEW'], ['REPORTS', 'EXPORT'], ['AUDIT', 'VIEW'], ['SETTINGS', 'VIEW'],
+      ['WAREHOUSE', 'VIEW'], ['LOADING_UNLOADING', 'VIEW'], ['DAILY_REPORTS', 'VIEW'], ['DAILY_REPORTS', 'CREATE'], ['DAILY_REPORTS', 'EDIT'], ['KPI', 'VIEW'], ['KPI', 'VERIFY'], ['KPI_CONFIG', 'VIEW'], ['DEPOT_KPI', 'VIEW'], ['REPORTS', 'VIEW'], ['REPORTS', 'EXPORT'], ['AUDIT', 'VIEW'], ['SETTINGS', 'VIEW'],
+    ],
+    ACCOUNTANT: [
+      ['DASHBOARD', 'VIEW'], ['KPI_SUMMARY', 'VIEW'], ['EMPLOYEES', 'VIEW'], ['TASKS', 'VIEW'], ['WAREHOUSE', 'VIEW'], ['LOCATIONS', 'VIEW'], ['LOADING_UNLOADING', 'VIEW'], ['DAILY_REPORTS', 'VIEW'], ['INVENTORY', 'VIEW'],
+      ['KPI', 'VIEW'], ['DEPOT_KPI', 'VIEW'], ['REPORTS', 'VIEW'], ['REPORTS', 'EXPORT'], ['AUDIT', 'VIEW'],
     ],
     SUPERVISOR: [
       ['DASHBOARD', 'VIEW'], ['SHIFTS', 'VIEW'], ['SHIFTS', 'CREATE'], ['KPI_SUMMARY', 'VIEW'], ['EMPLOYEES', 'VIEW'], ['TASKS', 'VIEW'], ['TASKS', 'ASSIGN'], ['TASKS', 'START'], ['TASKS', 'PAUSE'], ['TASKS', 'RESUME'], ['TASKS', 'COMPLETE'], ['TASKS', 'REOPEN'], ['TASKS', 'VERIFY'],
-      ['WAREHOUSE', 'VIEW'], ['LOADING_UNLOADING', 'VIEW'], ['KPI', 'VIEW'], ['KPI', 'VERIFY'], ['INCENTIVES', 'VIEW'], ['REPORTS', 'VIEW'],
+      ['WAREHOUSE', 'VIEW'], ['LOADING_UNLOADING', 'VIEW'], ['DAILY_REPORTS', 'VIEW'], ['DAILY_REPORTS', 'CREATE'], ['DAILY_REPORTS', 'EDIT'], ['KPI', 'VIEW'], ['KPI', 'VERIFY'], ['DEPOT_KPI', 'VIEW'], ['REPORTS', 'VIEW'],
     ],
     EMPLOYEE: [
-      ['DASHBOARD', 'VIEW'], ['SHIFTS', 'VIEW'], ['SHIFTS', 'CREATE'], ['TASKS', 'VIEW'], ['TASKS', 'ACCEPT'], ['TASKS', 'START'], ['TASKS', 'PAUSE'], ['TASKS', 'RESUME'], ['TASKS', 'COMPLETE'], ['KPI', 'VIEW'], ['INCENTIVES', 'VIEW'],
+      ['DASHBOARD', 'VIEW'], ['SHIFTS', 'VIEW'], ['SHIFTS', 'CREATE'], ['TASKS', 'VIEW'], ['TASKS', 'ACCEPT'], ['TASKS', 'START'], ['TASKS', 'PAUSE'], ['TASKS', 'RESUME'], ['TASKS', 'COMPLETE'], ['KPI', 'VIEW'],
     ],
   };
   const legacy: Record<Role, string[]> = {
     SUPER_ADMIN: [],
-    ADMIN: ['view:dashboard', 'view:crm', 'view:warehouse', 'view:people', 'view:finance', 'view:reports', 'action:create', 'action:edit', 'action:approve', 'action:export'],
+    ADMIN: ['view:dashboard', 'view:crm', 'view:warehouse', 'view:people', 'view:reports', 'action:create', 'action:edit', 'action:approve', 'action:export'],
+    ACCOUNTANT: ['view:dashboard', 'view:warehouse', 'view:people', 'view:reports', 'action:export'],
     SUPERVISOR: ['view:dashboard', 'view:crm', 'view:warehouse', 'view:people', 'view:reports', 'action:create', 'action:edit', 'action:approve', 'action:export'],
     EMPLOYEE: ['view:dashboard', 'view:warehouse', 'action:edit'],
   };

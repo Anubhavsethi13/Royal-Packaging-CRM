@@ -1,6 +1,16 @@
-export const V1_ROLES = ['SUPER_ADMIN', 'ADMIN', 'SUPERVISOR', 'EMPLOYEE'] as const;
+// Authority hierarchy, highest first: SUPER ADMIN → ADMIN → ACCOUNTANT → SUPERVISOR → OTHERS.
+// "Others" (operational workers/labour) keeps the existing EMPLOYEE role code.
+export const V1_ROLES = ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT', 'SUPERVISOR', 'EMPLOYEE'] as const;
 export type Role = (typeof V1_ROLES)[number];
 export type UserRole = Role;
+
+export const ROLE_LABELS: Record<Role, string> = {
+  SUPER_ADMIN: 'Super Admin',
+  ADMIN: 'Admin',
+  ACCOUNTANT: 'Accountant',
+  SUPERVISOR: 'Supervisor',
+  EMPLOYEE: 'Others',
+};
 
 export const PERMISSION_ACTIONS = ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'ASSIGN', 'ACCEPT', 'APPROVE', 'REJECT', 'EXPORT', 'START', 'PAUSE', 'RESUME', 'COMPLETE', 'REOPEN', 'CANCEL', 'VERIFY'] as const;
 export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];

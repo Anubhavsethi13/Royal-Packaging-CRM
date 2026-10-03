@@ -34,7 +34,7 @@ The frontend build is produced at `dist/frontend`. Deploy the contents of that d
 
 This frontend uses `BrowserRouter`. Static hosting must serve `dist/frontend/index.html` for unknown application routes such as `/clients`, `/orders`, and `/employees/emp-001`. Without this rewrite, direct navigation or refresh on a client-side route returns a host-level 404.
 
-No hosting-provider-specific rewrite file is present in this repository.
+`frontend/vercel.json` provides the SPA fallback on Vercel. For the production `/api` rewrite, session-cookie topology and required variables, see [Production configuration](../deployment/production-configuration.md).
 
 ## Backend release dependencies
 

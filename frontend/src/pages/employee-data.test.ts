@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadEmployeeDetail, loadEmployeeList } from './employee-data';
+import { loadEmployeeDetail, loadEmployeeList, mapEmployeeDtoToRecord } from './employee-data';
 import type { EmployeeRecord } from '../types/domain';
 
 const employee = (id: string, status: EmployeeRecord['status'] = 'Active'): EmployeeRecord => ({ id, code: `EMP-${id}`, name: 'Asha Rao', role: 'Operator', depot: 'Bengaluru · D1', status, productivity: '92%', kpi: '105', shift: 'Morning', tasks: 3 });
@@ -31,5 +31,27 @@ describe('employee data loading', () => {
     await expect(loadEmployeeDetail({ getById }, '1')).resolves.toMatchObject({ id: '1' });
     await expect(loadEmployeeDetail({ getById }, 'missing')).resolves.toBeUndefined();
     await expect(loadEmployeeDetail({ getById }, 'broken')).rejects.toThrow('Detail unavailable');
+  });
+});
+
+describe('employee API mapping', () => {
+  // Regression: the raw EmployeeDTO has no `status`, which crashed the Employees page (StatusBadge: undefined.toLowerCase()).
+  const dto = { id: 'e1', employee_code: 'EMP-1', employeeCode: 'EMP-1', name: 'Asha Rao', department: 'Warehouse', depot_id: 'd1', user_id: 'u1', is_active: true, currentShift: { shift_id: 's1', shift_name: 'Morning', effective_from: '2026-09-01', effective_to: null }, version: '1' };
+
+  it('maps backend fields to the rendered record', () => {
+    expect(mapEmployeeDtoToRecord(dto)).toEqual({ id: 'e1', code: 'EMP-1', name: 'Asha Rao', role: 'Not recorded', depot: 'd1', status: 'Active', productivity: '—', kpi: '—', shift: 'Morning', tasks: null });
+    expect(mapEmployeeDtoToRecord({ data: dto }).id).toBe('e1');
+  });
+
+  it('maps inactive employees, missing depot and missing shift without inventing values', () => {
+    const record = mapEmployeeDtoToRecord({ ...dto, is_active: false, depot_id: null, currentShift: null });
+    expect(record.status).toBe('Inactive');
+    expect(record.depot).toBe('No depot assigned');
+    expect(record.shift).toBe('No shift assigned');
+    expect(record.tasks).toBeNull();
+  });
+
+  it('always yields a defined status string', () => {
+    expect(typeof mapEmployeeDtoToRecord({ id: 'x' }).status).toBe('string');
   });
 });

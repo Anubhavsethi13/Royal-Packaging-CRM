@@ -10,4 +10,5 @@ export * from "./payroll/index.js";
 export * from "./kpi-reports/index.js";
 export * from "./audit-realtime/index.js";
 export * from "./shift-entries/index.js";
+export * from "./daily-reports/index.js";
 export * from "./warehouse-operations/index.js";

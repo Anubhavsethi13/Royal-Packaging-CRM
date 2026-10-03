@@ -121,6 +121,9 @@ export async function migrateTestDatabase(database: DatabaseConnection): Promise
 export async function truncateAllTables(database: DatabaseConnection): Promise<void> {
   await sql`
     TRUNCATE TABLE
+      depot_daily_report_events,
+      depot_daily_report_vehicles,
+      depot_daily_reports,
       shift_entry_truck_types,
       shift_entry_depots,
       shift_entries,

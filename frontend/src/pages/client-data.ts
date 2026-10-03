@@ -56,14 +56,15 @@ export function mapClientDtoToRecord(payload: unknown): ClientRecord {
     contactName: String(dto.contactName ?? dto.contact_name ?? ''),
     phone: String(dto.phone ?? ''),
     status,
-    orderCount: typeof dto.orderCount === 'number' ? dto.orderCount : (typeof dto.order_count === 'number' ? dto.order_count : 0),
-    openOrders: typeof dto.openOrders === 'number' ? dto.openOrders : (typeof dto.open_orders === 'number' ? dto.open_orders : 0),
+    // Not part of the backend client record: null (shown as —), never a fabricated 0.
+    orderCount: typeof dto.orderCount === 'number' ? dto.orderCount : (typeof dto.order_count === 'number' ? dto.order_count : null),
+    openOrders: typeof dto.openOrders === 'number' ? dto.openOrders : (typeof dto.open_orders === 'number' ? dto.open_orders : null),
     lastActivity: typeof dto.lastActivity === 'string'
       ? dto.lastActivity
       : (typeof dto.updatedAt === 'string'
           ? new Date(dto.updatedAt).toLocaleDateString()
-          : (typeof dto.updated_at === 'string' ? new Date(dto.updated_at).toLocaleDateString() : 'Recently')),
-    segment: typeof dto.segment === 'string' ? dto.segment : 'General'
+          : (typeof dto.updated_at === 'string' ? new Date(dto.updated_at).toLocaleDateString() : '—')),
+    segment: typeof dto.segment === 'string' ? dto.segment : '—'
   };
 }
 

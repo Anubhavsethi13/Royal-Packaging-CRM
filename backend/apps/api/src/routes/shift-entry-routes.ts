@@ -5,6 +5,7 @@ import {
   requireAuth,
   requireAuthorization
 } from "../middleware/auth-middleware.js";
+import { assertDepotInScope, type DepotDirectory } from "../middleware/depot-scope.js";
 import { BadRequestError, UnauthorizedError } from "../middleware/error-handler.js";
 import type { AuthService } from "../modules/identity/auth-service.js";
 import type { ShiftEntryService } from "../modules/shift-entries/shift-entry-service.js";
@@ -17,7 +18,8 @@ export function registerShiftEntryRoutes(
   router: Router,
   authService: AuthService,
   shiftEntryService: ShiftEntryService,
-  authPolicy: AuthorizationPolicy
+  authPolicy: AuthorizationPolicy,
+  directory: DepotDirectory
 ): void {
   const auth = requireAuth(authService);
   const authz = (action: string) => requireAuthorization(authPolicy, action);
@@ -53,6 +55,8 @@ export function registerShiftEntryRoutes(
   // GET /shift-entries/:id - owner or management (enforced by the "shift:read" policy).
   router.get("/shift-entries/:id", auth, validateId, authz("shift:read"), async (ctx: ApiContext) => {
     const entry = await shiftEntryService.getByIdOrThrow(ctx.params.id as string);
+    // A Supervisor may read entries of employees of their own depot only.
+    assertDepotInScope(await authPolicy.resolveDepotScope(ctx), (await directory.employeeDepot(entry.employee_id)).depotId, "This shift entry belongs to an employee of another depot.");
     sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(entry) });
   });
 }

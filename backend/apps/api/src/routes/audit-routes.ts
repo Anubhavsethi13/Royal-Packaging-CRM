@@ -26,7 +26,13 @@ export function registerAuditRoutes(
     const taskId = ctx.query.get("task_id") ?? undefined;
     const actorUserId = ctx.query.get("actor_user_id") ?? undefined;
     const eventType = ctx.query.get("event_type") ?? undefined;
-    const entries = await auditService.list({ task_id: taskId, actor_user_id: actorUserId, event_type: eventType });
+    // Incentive events are privileged (Super Admin only), decided server-side.
+    const includeIncentives = await authPolicy.evaluate(ctx, "incentive:read");
+    const depotScope = await authPolicy.resolveDepotScope(ctx);
+    const entries = await auditService.list(
+      { task_id: taskId, actor_user_id: actorUserId, event_type: eventType },
+      { includeIncentives, ...(depotScope.kind === "depot" ? { depotId: depotScope.depotId } : {}) }
+    );
     sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(entries) });
   });
 
@@ -36,7 +42,10 @@ export function registerAuditRoutes(
     if (!id || !uuidSchema.safeParse(id).success) {
       throw new BadRequestError("Invalid audit log ID format");
     }
-    const entry = await auditService.getById(id);
+    const includeIncentives = await authPolicy.evaluate(ctx, "incentive:read");
+    const depotScope = await authPolicy.resolveDepotScope(ctx);
+    // Out-of-depot events are indistinguishable from missing ones (no id probing).
+    const entry = await auditService.getById(id, { includeIncentives, ...(depotScope.kind === "depot" ? { depotId: depotScope.depotId } : {}) });
     if (!entry) {
       throw new NotFoundError(`Audit log entry with ID '${id}' was not found`);
     }

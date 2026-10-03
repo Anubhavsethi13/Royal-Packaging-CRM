@@ -3,7 +3,7 @@ import { DATA_SCOPES, PERMISSION_ACTIONS, TASK_EXCEPTION_STATES, TASK_LIFECYCLE_
 
 describe('V1 frontend domain vocabulary', () => {
   it('exposes the approved role and access-scope values', () => {
-    expect(V1_ROLES).toEqual(['SUPER_ADMIN', 'ADMIN', 'SUPERVISOR', 'EMPLOYEE']);
+    expect(V1_ROLES).toEqual(['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT', 'SUPERVISOR', 'EMPLOYEE']);
     expect(DATA_SCOPES).toContain('ORGANIZATION');
     expect(PERMISSION_ACTIONS).toContain('VERIFY');
   });

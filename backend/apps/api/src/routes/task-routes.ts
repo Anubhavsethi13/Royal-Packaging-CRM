@@ -17,7 +17,8 @@ import {
   requireAuth,
   requireAuthorization
 } from "../middleware/auth-middleware.js";
-import { BadRequestError, NotFoundError } from "../middleware/error-handler.js";
+import { depotFilterFor, requireTaskInScope, type DepotDirectory } from "../middleware/depot-scope.js";
+import { BadRequestError, ForbiddenError, NotFoundError } from "../middleware/error-handler.js";
 import type { AuthService } from "../modules/identity/auth-service.js";
 import type { TaskService } from "../modules/warehouse/task-service.js";
 import type { WarehouseOrchestrator } from "../modules/warehouse/warehouse-orchestrator.js";
@@ -58,10 +59,15 @@ export function registerTaskRoutes(
   authService: AuthService,
   taskService: TaskService,
   orchestrator: WarehouseOrchestrator,
-  authPolicy: AuthorizationPolicy
+  authPolicy: AuthorizationPolicy,
+  directory: DepotDirectory
 ): void {
   const auth = requireAuth(authService);
   const authz = (action: string) => requireAuthorization(authPolicy, action);
+  // Depot isolation: every /tasks/:id route checks the task against the caller's depot.
+  // Reads additionally limit callers without depot authority to tasks they are/were assigned to.
+  const inScope = requireTaskInScope(authPolicy, directory, { selfRequiresAssignment: false });
+  const inScopeRead = requireTaskInScope(authPolicy, directory, { selfRequiresAssignment: true });
 
   // POST /tasks - Create a new warehouse task
   router.post("/tasks", auth, authz("task:create"), async (ctx: ApiContext) => {
@@ -70,8 +76,13 @@ export function registerTaskRoutes(
       throw parseResult.error;
     }
 
+    // Depot-confined callers create tasks only in their own depot (the depot comes from the session, not the body).
+    const scope = await authPolicy.resolveDepotScope(ctx);
+    const depotId = depotFilterFor(scope, parseResult.data.depot_id);
+    await directory.assertLocationsInScope(scope, [parseResult.data.source_location_id, parseResult.data.destination_location_id]);
+
     const task = await taskService.createTask(
-      parseResult.data,
+      depotId ? { ...parseResult.data, depot_id: depotId } : parseResult.data,
       ctx.user!.id,
       { correlation_id: ctx.correlationId }
     );
@@ -89,8 +100,12 @@ export function registerTaskRoutes(
       throw parseResult.error;
     }
 
+    const scope = await authPolicy.resolveDepotScope(ctx);
+    const depotId = depotFilterFor(scope, parseResult.data.depot_id);
+    await directory.assertLocationsInScope(scope, [parseResult.data.source_location_id, parseResult.data.destination_location_id]);
+
     const task = await orchestrator.initializeTaskFromOrder(
-      parseResult.data,
+      depotId ? { ...parseResult.data, depot_id: depotId } : parseResult.data,
       ctx.user!.id
     );
 
@@ -101,7 +116,7 @@ export function registerTaskRoutes(
   });
 
   // GET /tasks/:id - Retrieve task details
-  router.get("/tasks/:id", auth, authz("task:read"), async (ctx: ApiContext) => {
+  router.get("/tasks/:id", auth, authz("task:read"), inScopeRead, async (ctx: ApiContext) => {
     const id = ctx.params.id;
     if (!id) {
       throw new BadRequestError("Task ID parameter is required");
@@ -128,8 +143,23 @@ export function registerTaskRoutes(
     const pagination = parsePagination(ctx.query);
     const rawStatus = ctx.query.get("status");
     const status = rawStatus && rawStatus.toLowerCase() !== "all" ? rawStatus : undefined;
-    const employeeId = ctx.query.get("employee_id") ?? ctx.query.get("employeeId") ?? undefined;
-    const depotId = ctx.query.get("depot_id") ?? ctx.query.get("depotId") ?? undefined;
+    const requestedEmployeeId = ctx.query.get("employee_id") ?? ctx.query.get("employeeId") ?? undefined;
+    const requestedDepotId = ctx.query.get("depot_id") ?? ctx.query.get("depotId") ?? undefined;
+    // Depot-confined callers see only their depot; callers without depot authority only their own tasks.
+    const scope = await authPolicy.resolveDepotScope(ctx);
+    const depotId = depotFilterFor(scope, requestedDepotId);
+    let employeeId = requestedEmployeeId;
+    if (scope.kind === "self") {
+      const own = await directory.activeEmployeeOfUser(ctx.user!.id);
+      if (requestedEmployeeId && requestedEmployeeId !== own?.id) {
+        throw new ForbiddenError("You may only list your own tasks.");
+      }
+      if (!own) {
+        sendList(ctx.res, [], pagination, 0);
+        return;
+      }
+      employeeId = own.id;
+    }
     const taskType = ctx.query.get("task_type") ?? ctx.query.get("taskType") ?? undefined;
     const clientId = ctx.query.get("client_id") ?? ctx.query.get("clientId") ?? undefined;
     const orderId = ctx.query.get("order_id") ?? ctx.query.get("orderId") ?? undefined;
@@ -168,15 +198,17 @@ export function registerTaskRoutes(
   // first, falling back to the native single-employee schema. Multi-
   // employee assignment is composed from repeated single assignTask calls
   // and is NOT atomic across employees - see multiEmployeeSchema doc.
-  router.post("/tasks/:id/assignments", auth, authz("task:assign"), async (ctx: ApiContext) => {
+  router.post("/tasks/:id/assignments", auth, authz("task:assign"), inScope, async (ctx: ApiContext) => {
     const payload = (typeof ctx.body === "object" && ctx.body !== null ? ctx.body : {}) as Record<string, unknown>;
     const taskId = ctx.params.id;
     if (!taskId) {
       throw new BadRequestError("Task ID parameter is required");
     }
+    const scope = await authPolicy.resolveDepotScope(ctx);
 
     const multiResult = multiEmployeeSchema.safeParse(payload);
     if (multiResult.success) {
+      await directory.assertEmployeesInScope(scope, multiResult.data.employeeIds);
       let updatedTask;
       for (const employeeId of multiResult.data.employeeIds) {
         updatedTask = await taskService.assignTask(
@@ -195,6 +227,7 @@ export function registerTaskRoutes(
     if (!parseResult.success) {
       throw parseResult.error;
     }
+    await directory.assertEmployeesInScope(scope, [parseResult.data.employee_id]);
 
     const updatedTask = await taskService.assignTask(parseResult.data, ctx.user!.id);
     sendJson(ctx.res, 200, {
@@ -208,7 +241,7 @@ export function registerTaskRoutes(
   // across the two calls for a task supporting multi-employee assignment
   // (if unassign succeeds but assign then fails, the task is left with one
   // fewer assignee rather than rolled back).
-  router.post("/tasks/:id/reassign", auth, authz("task:assign"), async (ctx: ApiContext) => {
+  router.post("/tasks/:id/reassign", auth, authz("task:assign"), inScope, async (ctx: ApiContext) => {
     const taskId = ctx.params.id;
     if (!taskId) {
       throw new BadRequestError("Task ID parameter is required");
@@ -219,6 +252,7 @@ export function registerTaskRoutes(
     if (!parseResult.success) {
       throw parseResult.error;
     }
+    await directory.assertEmployeesInScope(await authPolicy.resolveDepotScope(ctx), [parseResult.data.to_employee_id]);
 
     await taskService.unassignTask(
       {
@@ -242,7 +276,7 @@ export function registerTaskRoutes(
   });
 
   // POST /tasks/:id/unassign - Remove employee assignment
-  router.post("/tasks/:id/unassign", auth, authz("task:unassign"), async (ctx: ApiContext) => {
+  router.post("/tasks/:id/unassign", auth, authz("task:unassign"), inScope, async (ctx: ApiContext) => {
     const payload = (typeof ctx.body === "object" && ctx.body !== null ? ctx.body : {}) as Record<string, unknown>;
     const parseResult = unassignTaskRequestSchema.safeParse({
       ...payload,
@@ -260,7 +294,7 @@ export function registerTaskRoutes(
   });
 
   // POST /tasks/:id/start - Transition task to IN_PROGRESS
-  router.post("/tasks/:id/start", auth, authz("task:start"), async (ctx: ApiContext) => {
+  router.post("/tasks/:id/start", auth, authz("task:start"), inScope, async (ctx: ApiContext) => {
     const id = ctx.params.id;
     if (!id) {
       throw new BadRequestError("Task ID parameter is required");
@@ -282,7 +316,7 @@ export function registerTaskRoutes(
   });
 
   // POST /tasks/:id/pause - Pause active task
-  router.post("/tasks/:id/pause", auth, authz("task:pause"), async (ctx: ApiContext) => {
+  router.post("/tasks/:id/pause", auth, authz("task:pause"), inScope, async (ctx: ApiContext) => {
     const id = ctx.params.id;
     if (!id) {
       throw new BadRequestError("Task ID parameter is required");
@@ -304,7 +338,7 @@ export function registerTaskRoutes(
   });
 
   // POST /tasks/:id/resume - Resume paused task
-  router.post("/tasks/:id/resume", auth, authz("task:resume"), async (ctx: ApiContext) => {
+  router.post("/tasks/:id/resume", auth, authz("task:resume"), inScope, async (ctx: ApiContext) => {
     const id = ctx.params.id;
     if (!id) {
       throw new BadRequestError("Task ID parameter is required");
@@ -326,7 +360,7 @@ export function registerTaskRoutes(
   });
 
   // POST /tasks/:id/complete - Complete task
-  router.post("/tasks/:id/complete", auth, authz("task:complete"), async (ctx: ApiContext) => {
+  router.post("/tasks/:id/complete", auth, authz("task:complete"), inScope, async (ctx: ApiContext) => {
     const payload = (typeof ctx.body === "object" && ctx.body !== null ? ctx.body : {}) as Record<string, unknown>;
     const parseResult = completeTaskRequestSchema.safeParse({
       ...payload,
@@ -344,7 +378,7 @@ export function registerTaskRoutes(
   });
 
   // POST /tasks/:id/cancel - Cancel task
-  router.post("/tasks/:id/cancel", auth, authz("task:cancel"), async (ctx: ApiContext) => {
+  router.post("/tasks/:id/cancel", auth, authz("task:cancel"), inScope, async (ctx: ApiContext) => {
     const payload = (typeof ctx.body === "object" && ctx.body !== null ? ctx.body : {}) as Record<string, unknown>;
     const parseResult = cancelTaskRequestSchema.safeParse({
       ...payload,
@@ -362,7 +396,7 @@ export function registerTaskRoutes(
   });
 
   // POST /tasks/:id/reopen - Reopen task
-  router.post("/tasks/:id/reopen", auth, authz("task:reopen"), async (ctx: ApiContext) => {
+  router.post("/tasks/:id/reopen", auth, authz("task:reopen"), inScope, async (ctx: ApiContext) => {
     const payload = (typeof ctx.body === "object" && ctx.body !== null ? ctx.body : {}) as Record<string, unknown>;
     const parseResult = reopenTaskRequestSchema.safeParse({
       ...payload,
@@ -380,7 +414,7 @@ export function registerTaskRoutes(
   });
 
   // POST /tasks/:id/movement - Atomic task inventory movement execution
-  router.post("/tasks/:id/movement", auth, authz("task:execute_movement"), async (ctx: ApiContext) => {
+  router.post("/tasks/:id/movement", auth, authz("task:execute_movement"), inScope, async (ctx: ApiContext) => {
     const payload = (typeof ctx.body === "object" && ctx.body !== null ? ctx.body : {}) as Record<string, unknown>;
     const parseResult = executeTaskMovementRequestSchema.safeParse({
       ...payload,
@@ -391,6 +425,7 @@ export function registerTaskRoutes(
     if (!parseResult.success) {
       throw parseResult.error;
     }
+    await directory.assertLocationsInScope(await authPolicy.resolveDepotScope(ctx), [parseResult.data.source_location_id, parseResult.data.destination_location_id]);
 
     const result = await orchestrator.executeTaskMovement(parseResult.data, ctx.user!.id);
     sendJson(ctx.res, 200, {
@@ -400,7 +435,7 @@ export function registerTaskRoutes(
   });
 
   // GET /tasks/:id/summary - Closed-loop consolidated summary
-  router.get("/tasks/:id/summary", auth, authz("task:read_summary"), async (ctx: ApiContext) => {
+  router.get("/tasks/:id/summary", auth, authz("task:read_summary"), inScopeRead, async (ctx: ApiContext) => {
     const id = ctx.params.id;
     if (!id) {
       throw new BadRequestError("Task ID parameter is required");
@@ -419,7 +454,7 @@ export function registerTaskRoutes(
   });
 
   // GET /tasks/:id/assignments - Task assignment history
-  router.get("/tasks/:id/assignments", auth, authz("task:read_assignments"), async (ctx: ApiContext) => {
+  router.get("/tasks/:id/assignments", auth, authz("task:read_assignments"), inScopeRead, async (ctx: ApiContext) => {
     const id = ctx.params.id;
     if (!id) {
       throw new BadRequestError("Task ID parameter is required");
@@ -438,7 +473,7 @@ export function registerTaskRoutes(
   });
 
   // GET /tasks/:id/events - Task event history
-  router.get("/tasks/:id/events", auth, authz("task:read_events"), async (ctx: ApiContext) => {
+  router.get("/tasks/:id/events", auth, authz("task:read_events"), inScopeRead, async (ctx: ApiContext) => {
     const id = ctx.params.id;
     if (!id) {
       throw new BadRequestError("Task ID parameter is required");

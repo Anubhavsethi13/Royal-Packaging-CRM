@@ -13,6 +13,8 @@ export interface KpiSourceFilter {
   readonly from?: string;
   readonly to?: string;
   readonly depotId?: string;
+  /** Only entries of employees assigned to this depot (depot isolation). */
+  readonly employeeDepotId?: string;
   readonly truckTypeId?: string;
 }
 

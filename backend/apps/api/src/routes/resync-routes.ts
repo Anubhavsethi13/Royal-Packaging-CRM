@@ -3,6 +3,7 @@ import {
   requireAuth,
   requireAuthorization
 } from "../middleware/auth-middleware.js";
+import { depotFilterFor, type DepotDirectory } from "../middleware/depot-scope.js";
 import type { AuthService } from "../modules/identity/auth-service.js";
 import type { InventoryService } from "../modules/inventory/inventory-service.js";
 import type { KpiService } from "../modules/kpi/kpi-service.js";
@@ -23,14 +24,24 @@ export function registerResyncRoutes(
   taskService: TaskService,
   inventoryService: InventoryService,
   kpiService: KpiService,
-  authPolicy: AuthorizationPolicy
+  authPolicy: AuthorizationPolicy,
+  directory: DepotDirectory
 ): void {
   const auth = requireAuth(authService);
   const authz = (action: string) => requireAuthorization(authPolicy, action);
 
   // GET /resync/tasks
   router.get("/resync/tasks", auth, authz("resync:read"), async (ctx: ApiContext) => {
-    const tasks = await taskService.listTasks({});
+    // Same reach as GET /tasks: own depot for Supervisors, own assignments for Others.
+    const scope = await authPolicy.resolveDepotScope(ctx);
+    let tasks: Awaited<ReturnType<TaskService["listTasks"]>> = [];
+    if (scope.kind === "self") {
+      const own = await directory.activeEmployeeOfUser(ctx.user!.id);
+      tasks = own ? await taskService.listTasks({ employee_id: own.id }) : [];
+    } else {
+      const depotId = depotFilterFor(scope, undefined);
+      tasks = await taskService.listTasks(depotId ? { depot_id: depotId } : {});
+    }
     sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(tasks) });
   });
 
@@ -42,7 +53,15 @@ export function registerResyncRoutes(
 
   // GET /resync/kpis
   router.get("/resync/kpis", auth, authz("resync:read"), async (ctx: ApiContext) => {
-    const snapshots = await kpiService.list({});
+    const scope = await authPolicy.resolveDepotScope(ctx);
+    let snapshots: Awaited<ReturnType<KpiService["list"]>> = [];
+    if (scope.kind === "self") {
+      const own = await directory.activeEmployeeOfUser(ctx.user!.id);
+      snapshots = own ? await kpiService.list({ employee_id: own.id }) : [];
+    } else {
+      const depotId = depotFilterFor(scope, undefined);
+      snapshots = await kpiService.list(depotId ? { depot_id: depotId } : {});
+    }
     sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(snapshots) });
   });
 }

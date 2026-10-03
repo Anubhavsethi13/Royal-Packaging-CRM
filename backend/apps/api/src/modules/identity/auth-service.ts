@@ -26,18 +26,20 @@ const DUMMY_HASH = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy
 
 export interface AuthServiceConfig {
   readonly database: DatabaseConnection;
-  readonly appConfig?: Pick<ApplicationConfig, "NODE_ENV">;
+  readonly appConfig?: Pick<ApplicationConfig, "NODE_ENV"> & Partial<Pick<ApplicationConfig, "SESSION_COOKIE_SAMESITE">>;
   readonly sessionTtlHours?: number;
 }
 
 export class AuthService {
   private readonly database: DatabaseConnection;
   private readonly isProduction: boolean;
+  private readonly cookieSameSite: "lax" | "strict" | "none";
   private readonly sessionTtlHours: number;
 
   public constructor(config: AuthServiceConfig) {
     this.database = config.database;
     this.isProduction = config.appConfig?.NODE_ENV === "production";
+    this.cookieSameSite = config.appConfig?.SESSION_COOKIE_SAMESITE ?? "lax";
     this.sessionTtlHours = config.sessionTtlHours ?? DEFAULT_SESSION_TTL_HOURS;
   }
 
@@ -259,7 +261,8 @@ export class AuthService {
       };
 
       const cookieOptions = createSessionCookie(sessionToken, expiresAt, {
-        isProduction: this.isProduction
+        isProduction: this.isProduction,
+        sameSite: this.cookieSameSite
       });
 
       return {

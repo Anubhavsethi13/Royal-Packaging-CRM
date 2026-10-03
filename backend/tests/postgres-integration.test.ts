@@ -1197,7 +1197,9 @@ async function createUserWithRole(loginId: string, roleCode: string, roleName: s
       id: employeeId,
       user_id: userId,
       is_active: true,
-      employee_code: `EMP-${employeeId.slice(0, 8)}`
+      employee_code: `EMP-${employeeId.slice(0, 8)}`,
+      // Everyone in this suite works in the test depot (managers/supervisors are depot-confined).
+      depot_id: testDepotId
     })
     .execute();
 

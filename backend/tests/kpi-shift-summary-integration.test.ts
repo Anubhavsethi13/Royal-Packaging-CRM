@@ -94,7 +94,7 @@ after(async () => {
   if (db) await cleanupTestDatabase(db);
 });
 
-async function createActor(login: string, role: string | null, withEmployee: boolean): Promise<Actor> {
+async function createActor(login: string, role: string | null, withEmployee: boolean, depotCode?: string): Promise<Actor> {
   const userId = crypto.randomUUID();
   await db
     .insertInto("users")
@@ -127,7 +127,10 @@ async function createActor(login: string, role: string | null, withEmployee: boo
     employeeId = crypto.randomUUID();
     await db
       .insertInto("employees")
-      .values({ id: employeeId, user_id: userId, employee_code: `EMP-${login}`, name: login, department: "Warehouse", is_active: true })
+      .values({
+        id: employeeId, user_id: userId, employee_code: `EMP-${login}`, name: login, department: "Warehouse", is_active: true,
+        depot_id: depotCode ? (await db.selectFrom("depots").select("id").where("code", "=", depotCode).executeTakeFirstOrThrow()).id : null
+      })
       .execute();
   }
 
@@ -198,10 +201,11 @@ async function seedFixture(): Promise<void> {
     ])
     .execute();
 
-  empA = await createActor("emp_a", "EMPLOYEE", true);
-  empB = await createActor("emp_b", "EMPLOYEE", true);
+  // Employee depot assignments (depot isolation): A and the supervisor work in DEP-01, B in DEP-02.
+  empA = await createActor("emp_a", "EMPLOYEE", true, "DEP-01");
+  empB = await createActor("emp_b", "EMPLOYEE", true, "DEP-02");
   empIdle = await createActor("emp_idle", "EMPLOYEE", true);
-  supervisor = await createActor("sup", "SUPERVISOR", true);
+  supervisor = await createActor("sup", "SUPERVISOR", true, "DEP-01");
   admin = await createActor("adm", "ADMIN", false);
   superAdmin = await createActor("root", "SUPER_ADMIN", false);
   noProfile = await createActor("no_profile", "EMPLOYEE", false);
@@ -348,7 +352,7 @@ test("KS-I9: employees can never choose another employee's data", async () => {
 // ---------------------------------------------------------------------------
 
 test("KS-I10: management summary aggregates across employees and lists per-employee rows", async () => {
-  const body = await mgmtSummary(supervisor);
+  const body = await mgmtSummary(admin);
   assert.equal(body.success, true);
   assert.equal(body.data.source, "SHIFT_ENTRY");
   assert.equal(body.data.metrics.shift_count, 4);
@@ -451,12 +455,16 @@ test("KS-I17: employees cannot read the management summary", async () => {
   assert.equal(((await res.json()) as ErrorBody).code, "FORBIDDEN");
 });
 
-test("KS-I18: supervisor, admin and super admin can read the management summary", async () => {
-  for (const actor of [supervisor, admin, superAdmin]) {
+test("KS-I18: admin, super admin and supervisors (no fixed depot) read every employee", async () => {
+  for (const actor of [admin, superAdmin, supervisor]) {
     const res = await get(actor, "/kpi/summary");
     assert.equal(res.status, 200);
     assert.equal(((await res.json()) as ManagementSummaryBody).data.metrics.shift_count, 4);
   }
+  // Supervisors have organization-wide task scope (V1 decision D5/D6): every depot's employees.
+  const all = await mgmtSummary(supervisor);
+  assert.ok(all.data.employees.some((row) => row.employee_id === empA.employeeId) && all.data.employees.some((row) => row.employee_id === empB.employeeId));
+  assert.equal((await get(supervisor, `/kpi/summary?employee_id=${empB.employeeId}`)).status, 200);
 });
 
 test("KS-I19: users without an approved role are forbidden on both endpoints", async () => {

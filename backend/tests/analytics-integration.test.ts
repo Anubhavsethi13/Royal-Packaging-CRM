@@ -156,7 +156,13 @@ test("AN6: DashboardService.getSummary computes real aggregates consistently und
   assert.equal(summary.boxesHandled, "25");
   assert.equal(summary.employeeCountsByDepartment.Warehouse, 1);
   assert.equal(summary.slaCompliance, null);
-  assert.equal(summary.payrollStatus, null);
+  // Payroll/incentive placeholders are omitted without incentive access (Super Admin only) ...
+  assert.equal("payrollStatus" in summary, false);
+  assert.equal("incentiveTotalsByStatus" in summary, false);
+  // ... and present for an incentive-authorized caller (payroll status is still always null).
+  const privileged = await dashboardService.getSummary({ depot_id: testDepotId }, { includeIncentives: true });
+  assert.equal(privileged.payrollStatus, null);
+  assert.ok(privileged.incentiveTotalsByStatus);
 
   const otherDepotSummary = await dashboardService.getSummary({ depot_id: crypto.randomUUID() });
   assert.equal(otherDepotSummary.tasksByStatus.COMPLETED ?? 0, 0);

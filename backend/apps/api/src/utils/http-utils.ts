@@ -380,12 +380,15 @@ export function formatSetCookie(cookie: SessionCookieOptions): string {
 }
 
 /**
- * Generates a Set-Cookie header to clear/expire a session cookie.
+ * Generates a Set-Cookie header to clear/expire a session cookie. It carries
+ * the same SameSite/Secure attributes as the login cookie so browsers accept it
+ * in cross-site deployments too.
  */
 export function formatClearCookie(
   name: string,
   isProduction: boolean = false,
-  path: string = "/"
+  path: string = "/",
+  sameSite: "lax" | "strict" | "none" = "lax"
 ): string {
   const parts: string[] = [
     `${name}=`,
@@ -393,10 +396,10 @@ export function formatClearCookie(
     "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
     "Max-Age=0",
     "HttpOnly",
-    "SameSite=Lax"
+    `SameSite=${sameSite.charAt(0).toUpperCase() + sameSite.slice(1)}`
   ];
 
-  if (isProduction) {
+  if (isProduction || sameSite === "none") {
     parts.push("Secure");
   }
 

@@ -43,7 +43,7 @@ Metric, category, unit and direction follow the existing frontend KPI metric cat
 For employee *e* and period *P* (a set of local dates):
 
 - **Tasks:** status `COMPLETED` with `completed_at` whose local date (in `OPERATIONS_TIMEZONE`) falls in *P*.
-- **Participants of a task:** employees whose assignment was active at completion (`assigned_at ≤ completed_at < unassigned_at`, or never unassigned). This reuses the confirmed incentive participant rule; employees unassigned before completion are excluded.
+- **Participants of a task:** employees whose assignment was active at completion (`assigned_at ≤ completed_at < unassigned_at`, or never unassigned); employees unassigned before completion are excluded. This is a documented V1 assumption. See [Business-rule assumptions](#business-rule-assumptions): only *equal sharing* is a confirmed business rule; the participant cutoff is not.
 - **Credited BOX of a task for one participant:** `completed_box_quantity ÷ participants`. Per-employee BOX totals therefore add up to the warehouse total.
 - **BOXES_HANDLED** = Σ credited BOX over *e*'s tasks in *P* (within the KPI's task scope).
 - **TASKS_COMPLETED** = count of those tasks (each participant is credited with the task).
@@ -63,10 +63,50 @@ For employee *e* and period *P* (a set of local dates):
 | `PENDING` | The period has not ended yet (value is partial) |
 | `AVAILABLE` | Otherwise |
 
+## Business-rule assumptions
+
+The calculator does not invent rules silently. The table shows which rules are confirmed and where each assumption lives in code.
+
+| Rule | Status | Source / location |
+|---|---|---|
+| Shared task: participants share **equally** | CONFIRMED (incentives) | `backend/docs/architecture/17-approved-business-rules.md`, `26-final-client-decisions.md`; applied to KPI BOX credit by analogy |
+| Participant cutoff: *assigned at completion* | ASSUMPTION (CLIENT DECISION REQUIRED) | `kpi-result-calculator.ts` (`atCompletion` and the `participants` subquery) |
+| Rounding: 2 dp, half-up, exact rational | ASSUMPTION (CLIENT DECISION REQUIRED) | `kpi-result-calculator.ts` (`ratio2`) |
+| Loading/unloading classification by `task_type` synonym | PROVISIONAL, shared with Warehouse operations | `packages/contracts/src/warehouse-operations/index.ts` (`TASK_TYPE_OPERATION_SYNONYMS`, `classifyTaskType`) |
+| Collaborator attribution (I-02) | CLIENT DECISION REQUIRED | Not implemented; only assigned employees are credited |
+| SLA formula and targets | CLIENT DECISION REQUIRED | Always `NOT_AVAILABLE`; SLA definitions are not seeded |
+
+**Known divergence (reported, not changed):**
+- `IncentiveService` (`incentive-service.ts`, participant selection) credits assignments with `unassigned_at IS NULL` at the moment the incentive is calculated.
+- `TaskService.unassignTask` has no status guard, so an employee can be unassigned *after* a task completes. When that happens:
+  - KPI results still credit that employee, because they were assigned at completion;
+  - the incentive calculation would exclude them.
+- Otherwise the two rules agree. The client must decide which cutoff is authoritative.
+
+## Seeded KPI definitions
+
+`npm run db:seed` (`backend/scripts/seed-admin.ts`, step 5 → `backend/scripts/kpi-definition-seed.ts`) inserts active definitions for:
+
+`BOXES_HANDLED`, `LOADING_BOXES`, `UNLOADING_BOXES`, `TASKS_COMPLETED`, `TASK_TIME`, `LOADING_TIME`, `UNLOADING_TIME`, `AVERAGE_BOXES_PER_TASK`
+
+These are the calculator codes that read only recorded facts (completed BOX quantity, completed tasks, recorded task events).
+
+- **Not seeded:**
+  - `LOADING_SLA_COMPLIANCE` and `UNLOADING_SLA_COMPLIANCE`: the SLA rule is unapproved;
+  - any targets, weights, scores or incentives.
+- **Idempotent:** a code is inserted only if no definition with that code exists, in any letter case, and the insert also has `ON CONFLICT (code) DO NOTHING`.
+- **Admin rows are protected:** existing definitions (including edited or deactivated ones) are never modified.
+- **Covered by** `tests/kpi-definition-seed-integration.test.ts`.
+
 ## Periods and timezone
 
 - **Kinds:** `DAILY`, `WEEKLY` (ISO weeks, Monday to Sunday) and `MONTHLY` (calendar month). The default is `DAILY`. `CUSTOM` is not supported by the API.
-- **Boundaries:** calendar dates in the backend's `OPERATIONS_TIMEZONE` (IANA name, default `UTC`). Set it to the site's zone (e.g. `Asia/Kolkata`); otherwise work done after 00:00 UTC is counted on the next UTC day.
+- **Boundaries:** calendar dates in the backend's `OPERATIONS_TIMEZONE` (IANA name; `Asia/Kolkata` for the current deployment).
+  - It is **required in production**: the server refuses to start without it or with an invalid name.
+  - Development and test fall back to `UTC`.
+- **UTC vs operational dates:** timestamps are stored and returned as UTC instants. Only period bucketing uses local dates.
+  - Example: a task completed at `2026-09-09T19:00Z` is 00:30 IST on 10 September, so it counts on **2026-09-10**, not on the previous UTC date.
+  - Covered by `tests/kpi-results-timezone-integration.test.ts`.
 - **Default range:** the 30 days up to today (in that timezone), snapped to whole periods.
 - **Maximum range:** DAILY 92 days, WEEKLY 371 days, MONTHLY 731 days.
 

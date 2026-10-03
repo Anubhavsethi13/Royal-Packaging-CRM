@@ -55,7 +55,9 @@ describe('order DTO mapping', () => {
     expect(record.unit).toBe('BOX');
     expect(record.status).toBe('In production');
     expect(record.priority).toBe('Urgent');
-    expect(record.sla).toBe('At risk');
+    // No order SLA rule exists (V1 freeze): never derived from priority.
+    expect(record.sla).toBe('Not configured');
+    expect(record.fulfillment).toBeNull();
   });
 
   it('maps all status transitions correctly', () => {

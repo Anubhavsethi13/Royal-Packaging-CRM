@@ -58,9 +58,10 @@ async function buildFrontendUser(
 export function registerAuthRoutes(
   router: Router,
   authService: AuthService,
-  options: { isProduction?: boolean; rbacService?: RBACService } = {}
+  options: { isProduction?: boolean; rbacService?: RBACService; cookieSameSite?: "lax" | "strict" | "none" } = {}
 ): void {
   const isProduction = options.isProduction ?? false;
+  const cookieSameSite = options.cookieSameSite ?? "lax";
   const rbacService = options.rbacService;
 
   // POST /auth/login
@@ -124,7 +125,7 @@ export function registerAuthRoutes(
       await authService.revokeSession(ctx.sessionToken);
     }
 
-    const clearCookieHeader = formatClearCookie(DEFAULT_SESSION_COOKIE_NAME, isProduction);
+    const clearCookieHeader = formatClearCookie(DEFAULT_SESSION_COOKIE_NAME, isProduction, "/", cookieSameSite);
     sendJson(
       ctx.res,
       200,

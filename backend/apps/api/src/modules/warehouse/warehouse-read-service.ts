@@ -30,6 +30,8 @@ export interface Page<T> {
 export interface OperationScope {
   /** When set, only tasks actively assigned to this employee are visible. */
   readonly employeeId?: string;
+  /** When set (depot-confined callers), only tasks of this depot are visible. */
+  readonly depotId?: string;
 }
 
 /**
@@ -120,11 +122,16 @@ export class WarehouseReadService {
     return { ...operation, activity };
   }
 
-  public async listLocations(filter: ListLocationsFilter, page: { limit: number; offset: number }): Promise<Page<LocationDTO>> {
+  /** `depotId` (depot-confined callers) limits the result to that depot's locations. */
+  public async listLocations(filter: ListLocationsFilter, page: { limit: number; offset: number }, depotId?: string): Promise<Page<LocationDTO>> {
     let base = this.database
       .selectFrom("locations")
       .innerJoin("depots", "depots.id", "locations.depot_id")
       .leftJoin("locations as parent", "parent.id", "locations.parent_location_id");
+
+    if (depotId) {
+      base = base.where("locations.depot_id", "=", depotId);
+    }
 
     if (filter.warehouse_code) {
       base = base.where(sql<string>`upper(depots.code)`, "=", filter.warehouse_code.toUpperCase());
@@ -202,6 +209,9 @@ export class WarehouseReadService {
             .where("task_assignments.unassigned_at", "is", null)
         )
       );
+    }
+    if (scope.depotId) {
+      query = query.where("tasks.depot_id", "=", scope.depotId);
     }
     if (filter.status) {
       query = query.where("tasks.status", "=", filter.status);

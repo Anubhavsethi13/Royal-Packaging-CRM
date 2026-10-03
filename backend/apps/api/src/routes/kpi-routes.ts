@@ -1,5 +1,6 @@
 import {
   buildPageMeta,
+  depotDashboardQuerySchema,
   employeeKpiSummaryFilterSchema,
   listKpiDefinitionsFilterSchema,
   listKpiResultsFilterSchema,
@@ -12,6 +13,7 @@ import {
   requireAuth,
   requireAuthorization
 } from "../middleware/auth-middleware.js";
+import { assertDepotInScope, depotFilterFor, type DepotDirectory } from "../middleware/depot-scope.js";
 import { BadRequestError, ForbiddenError, HttpError, NotFoundError, UnauthorizedError } from "../middleware/error-handler.js";
 import type { AuthService } from "../modules/identity/auth-service.js";
 import { KpiResultRequestError, type KpiResultScope } from "../modules/kpi/kpi-result-calculator.js";
@@ -25,7 +27,8 @@ export function registerKpiRoutes(
   router: Router,
   authService: AuthService,
   kpiService: KpiService,
-  authPolicy: AuthorizationPolicy
+  authPolicy: AuthorizationPolicy,
+  directory: DepotDirectory
 ): void {
   const auth = requireAuth(authService);
   const authz = (action: string) => requireAuthorization(authPolicy, action);
@@ -58,15 +61,37 @@ export function registerKpiRoutes(
       truck_type: ctx.query.get("truck_type") ?? undefined,
       employee_id: ctx.query.get("employee_id") ?? undefined
     });
-    const result = await kpiService.getManagementSummary(filter, {
-      limit: pagination.pageSize,
-      offset: pagination.offset
-    });
+    // Depot isolation: a Supervisor aggregates only employees of their own depot.
+    const depotScope = await authPolicy.resolveDepotScope(ctx);
+    await directory.assertWarehouseCodeInScope(depotScope, filter.warehouse_code);
+    await directory.assertEmployeesInScope(depotScope, [filter.employee_id]);
+    const result = await kpiService.getManagementSummary(
+      filter,
+      { limit: pagination.pageSize, offset: pagination.offset },
+      depotScope.kind === "depot" ? { employeeDepotId: depotScope.depotId } : {}
+    );
     sendJson(ctx.res, 200, {
       success: true,
       data: withCamelCaseMirror(result.summary),
       meta: buildPageMeta(pagination.page, pagination.pageSize, result.totalEmployees)
     });
+  });
+
+  // GET /kpi/depot-dashboard - depot KPIs with their source records (Supervisor: own depot only).
+  router.get("/kpi/depot-dashboard", auth, authz("kpi:read_depot"), async (ctx: ApiContext) => {
+    const query = depotDashboardQuerySchema.parse({
+      depot_id: ctx.query.get("depot_id") ?? undefined,
+      from: ctx.query.get("from") ?? ctx.query.get("date") ?? undefined,
+      to: ctx.query.get("to") ?? ctx.query.get("date") ?? undefined
+    });
+    // The depot comes from the session for depot-confined callers; naming another one is refused.
+    const depotScope = await authPolicy.resolveDepotScope(ctx);
+    const depotId = depotFilterFor(depotScope, query.depot_id);
+    const dashboard = await kpiService.getDepotDashboard(query, depotId, depotScope.kind === "all");
+    if (!dashboard) {
+      throw new NotFoundError(`Depot '${depotId}' was not found`);
+    }
+    sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(dashboard) });
   });
 
   // GET /kpi/definitions - read-only KPI configuration (definitions + current targets).
@@ -94,10 +119,14 @@ export function registerKpiRoutes(
     sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(definition) });
   });
 
-  /** `kpi:read_all` (management tier) sees every employee; anyone else only themselves (null = no employee profile). */
+  /**
+   * `kpi:read_all` sees every employee in its depot reach (Supervisor: own depot
+   * only, applied in the query); anyone else only themselves (null = no employee profile).
+   */
   const resolveResultScope = async (ctx: ApiContext): Promise<KpiResultScope | null> => {
     if (await authPolicy.evaluate(ctx, "kpi:read_all")) {
-      return {};
+      const depotScope = await authPolicy.resolveDepotScope(ctx);
+      return depotScope.kind === "depot" ? { depotId: depotScope.depotId } : {};
     }
     const employeeId = await kpiService.findActiveEmployeeId(ctx.user!.id);
     return employeeId ? { employeeId } : null;
@@ -131,6 +160,11 @@ export function registerKpiRoutes(
     if (filter.employee_id && (!scope || (scope.employeeId && scope.employeeId !== filter.employee_id))) {
       throw new ForbiddenError("You may only view your own KPI results.");
     }
+    if (scope?.depotId) {
+      const depotScope = { kind: "depot" as const, depotId: scope.depotId };
+      await directory.assertEmployeesInScope(depotScope, [filter.employee_id]);
+      await directory.assertWarehouseCodeInScope(depotScope, filter.warehouse_code);
+    }
     if (!scope) {
       sendList(ctx.res, [], pagination, 0);
       return;
@@ -154,19 +188,40 @@ export function registerKpiRoutes(
     if (!scope || (scope.employeeId && scope.employeeId !== parsed.employeeId)) {
       throw new ForbiddenError("You may only view your own KPI results.");
     }
-    const result = await kpiService.getResult(parsed);
+    if (scope.depotId) {
+      await directory.assertEmployeesInScope({ kind: "depot", depotId: scope.depotId }, [parsed.employeeId]);
+    }
+    const result = await kpiService.getResult(parsed, new Date(), scope);
     if (!result) {
       throw new NotFoundError(`KPI result '${ctx.params.id}' was not found`);
     }
     sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(result) });
   });
 
+  /** Snapshot filters within the caller's reach (null = nothing visible). */
+  const snapshotScope = async (ctx: ApiContext, depotId: string | undefined, employeeId: string | undefined): Promise<{ depot_id?: string; employee_id?: string } | null> => {
+    const depotScope = await authPolicy.resolveDepotScope(ctx);
+    if (depotScope.kind === "self") {
+      const own = await directory.activeEmployeeOfUser(ctx.user!.id);
+      if (employeeId && employeeId !== own?.id) {
+        throw new ForbiddenError("You may only view your own KPI snapshots.");
+      }
+      return own ? { employee_id: own.id, ...(depotId ? { depot_id: depotId } : {}) } : null;
+    }
+    await directory.assertEmployeesInScope(depotScope, [employeeId]);
+    const scopedDepotId = depotFilterFor(depotScope, depotId);
+    return { ...(scopedDepotId ? { depot_id: scopedDepotId } : {}), ...(employeeId ? { employee_id: employeeId } : {}) };
+  };
+
   // GET /kpis
   router.get("/kpis", auth, authz("kpi:read"), async (ctx: ApiContext) => {
     const kpiCode = ctx.query.get("kpi_code") ?? undefined;
-    const depotId = ctx.query.get("depot_id") ?? undefined;
-    const employeeId = ctx.query.get("employee_id") ?? undefined;
-    const snapshots = await kpiService.list({ kpi_code: kpiCode, depot_id: depotId, employee_id: employeeId });
+    const scoped = await snapshotScope(ctx, ctx.query.get("depot_id") ?? undefined, ctx.query.get("employee_id") ?? undefined);
+    if (!scoped) {
+      sendJson(ctx.res, 200, { success: true, data: [] });
+      return;
+    }
+    const snapshots = await kpiService.list({ kpi_code: kpiCode, ...scoped });
     sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(snapshots) });
   });
 
@@ -180,6 +235,11 @@ export function registerKpiRoutes(
     if (!snapshot) {
       throw new NotFoundError(`KPI snapshot with ID '${id}' was not found`);
     }
+    const depotScope = await authPolicy.resolveDepotScope(ctx);
+    assertDepotInScope(depotScope, snapshot.depot_id, "This KPI snapshot belongs to another depot.");
+    if (depotScope.kind === "self" && (await directory.activeEmployeeOfUser(ctx.user!.id))?.id !== snapshot.employee_id) {
+      throw new ForbiddenError("You may only view your own KPI snapshots.");
+    }
     sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(snapshot) });
   });
 
@@ -189,7 +249,8 @@ export function registerKpiRoutes(
     if (!code) {
       throw new BadRequestError("KPI code parameter is required");
     }
-    const drillDown = await kpiService.drillDown(code);
+    const scoped = await snapshotScope(ctx, undefined, undefined);
+    const drillDown = scoped ? await kpiService.drillDown(code, scoped) : { kpi_code: code, snapshots: [] };
     sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(drillDown) });
   });
 }

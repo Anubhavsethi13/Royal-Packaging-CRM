@@ -75,7 +75,10 @@ describe('live authentication and session mapping (AUTH-01 through AUTH-10)', ()
     expect(normalizeRole('manager')).toBe('SUPERVISOR');
     expect(normalizeRole('SUPER_ADMIN')).toBe('SUPER_ADMIN');
     expect(normalizeRole('EMPLOYEE')).toBe('EMPLOYEE');
-    expect(normalizeRole('UNKNOWN')).toBe('ADMIN');
+    expect(normalizeRole('ACCOUNTANT')).toBe('ACCOUNTANT');
+    // Unknown or missing roles must never be displayed as an administrative role.
+    expect(normalizeRole('UNKNOWN')).toBe('EMPLOYEE');
+    expect(normalizeRole(null)).toBe('EMPLOYEE');
   });
 
   it('AUTH-02 & AUTH-07: maps 401 error to invalid_credentials', async () => {

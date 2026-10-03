@@ -1,6 +1,7 @@
 import type { ServerResponse } from "node:http";
 import {
   CommercialDomainError,
+  DailyReportDomainError,
   IncentiveDomainError,
   InventoryDomainError,
   OrchestrationDomainError,
@@ -160,6 +161,11 @@ export function handleApiError(err: unknown, res: ServerResponse, requestId?: st
   if (err instanceof ReportDomainError) {
     const statusCode = mapReportErrorCodeToStatus(err.code);
     sendError(res, statusCode, err.code, err.message, undefined, {}, requestId);
+    return;
+  }
+
+  if (err instanceof DailyReportDomainError) {
+    sendError(res, mapDailyReportErrorCodeToStatus(err.code), err.code, err.message, err.fields, {}, requestId);
     return;
   }
 
@@ -325,6 +331,24 @@ function mapReportErrorCodeToStatus(code: string): number {
     case "UNSUPPORTED_EXPORT_FORMAT":
       return 400;
     case "VALIDATION_FAILED":
+    default:
+      return 400;
+  }
+}
+
+function mapDailyReportErrorCodeToStatus(code: string): number {
+  switch (code) {
+    case "DAILY_REPORT_NOT_FOUND":
+      return 404;
+    case "DAILY_REPORT_DUPLICATE":
+    case "DAILY_REPORT_LOCKED":
+    case "DAILY_REPORT_VERSION_CONFLICT":
+      return 409;
+    case "DAILY_REPORT_INCOMPLETE":
+      return 422;
+    case "DEPOT_ASSIGNMENT_REQUIRED":
+    case "DEPOT_FORBIDDEN":
+      return 403;
     default:
       return 400;
   }

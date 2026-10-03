@@ -1026,8 +1026,11 @@ test("9. Closed-loop task summary (/tasks/:id/summary)", async () => {
 test("10. Quality inspection and photo registration endpoints", async () => {
   const ctx = await startTestServer({ authorizationPolicy: new PermissiveAuthorizationPolicy() });
   try {
-    const { cookie } = await createAuthenticatedSession(ctx.state, ctx.baseUrl);
+    const { cookie, user } = await createAuthenticatedSession(ctx.state, ctx.baseUrl);
     const master = seedMasterData(ctx.state);
+    // The photo capturer comes from the session: the operator's own employee profile.
+    const operatorEmployee = ctx.state.employees.find((employee) => employee.id === master.employeeId)!;
+    operatorEmployee.user_id = user.id;
 
     // Create task
     const taskRes = await fetch(`${ctx.baseUrl}/tasks`, {
@@ -1050,8 +1053,17 @@ test("10. Quality inspection and photo registration endpoints", async () => {
       })
     });
     assert.equal(photoRes.status, 201);
-    const photoBody = await photoRes.json() as { success: boolean; data: { id: string; layer_number: number } };
+    const photoBody = await photoRes.json() as { success: boolean; data: { id: string; layer_number: number; captured_by_employee_id: string | null } };
     assert.equal(photoBody.data.layer_number, 1);
+    assert.equal(photoBody.data.captured_by_employee_id, master.employeeId);
+
+    // Naming another employee as the capturer is refused (identity comes from the session).
+    const forged = await fetch(`${ctx.baseUrl}/tasks/${taskId}/photos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ layer_number: 2, box_quantity: 5, storage_key: "warehouse/2026/09/layer_2.jpg", captured_by_employee_id: crypto.randomUUID() })
+    });
+    assert.equal(forged.status, 403);
 
     // 2. Query photos
     const getPhotosRes = await fetch(`${ctx.baseUrl}/tasks/${taskId}/photos`, {

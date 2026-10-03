@@ -6,6 +6,7 @@ import {
   requireAuth,
   requireAuthorization
 } from "../middleware/auth-middleware.js";
+import { DepotForbiddenError, type DepotDirectory } from "../middleware/depot-scope.js";
 import { BadRequestError, NotFoundError } from "../middleware/error-handler.js";
 import type { AuthService } from "../modules/identity/auth-service.js";
 import type { InventoryService } from "../modules/inventory/inventory-service.js";
@@ -36,7 +37,8 @@ export function registerInventoryRoutes(
   router: Router,
   authService: AuthService,
   inventoryService: InventoryService,
-  authPolicy: AuthorizationPolicy
+  authPolicy: AuthorizationPolicy,
+  directory: DepotDirectory
 ): void {
   const auth = requireAuth(authService);
   const authz = (action: string) => requireAuthorization(authPolicy, action);
@@ -68,6 +70,12 @@ export function registerInventoryRoutes(
     if (!parseResult.success) {
       throw parseResult.error;
     }
+    // Depot isolation: a Supervisor moves stock only between locations of their own depot.
+    const scope = await authPolicy.resolveDepotScope(ctx);
+    await directory.assertLocationsInScope(scope, [parseResult.data.source_location_id, parseResult.data.destination_location_id]);
+    if (scope.kind === "depot" && parseResult.data.task_id && (await directory.taskDepot(parseResult.data.task_id)).depotId !== scope.depotId) {
+      throw new DepotForbiddenError("This task belongs to another depot.");
+    }
 
     const result = await inventoryService.moveInventory(parseResult.data, ctx.user!.id);
     sendJson(ctx.res, 200, {
@@ -95,6 +103,7 @@ export function registerInventoryRoutes(
         throw new BadRequestError("Invalid 'location_id' format: must be a valid UUID");
       }
 
+      await directory.assertLocationsInScope(await authPolicy.resolveDepotScope(ctx), [locationId]);
       const balance = await inventoryService.getBalance(batchId, locationId);
       sendJson(ctx.res, 200, {
         success: true,
@@ -103,7 +112,16 @@ export function registerInventoryRoutes(
       return;
     }
 
-    const balances = await inventoryService.getBatchBalances(batchId);
+    // A Supervisor only sees the batch's balances held in their own depot's locations.
+    const scope = await authPolicy.resolveDepotScope(ctx);
+    let balances = await inventoryService.getBatchBalances(batchId);
+    if (scope.kind === "depot") {
+      const visible: typeof balances = [];
+      for (const balance of balances) {
+        if ((await directory.locationDepot(balance.location_id)) === scope.depotId) visible.push(balance);
+      }
+      balances = visible;
+    }
     sendJson(ctx.res, 200, {
       success: true,
       data: withCamelCaseMirror(balances)
@@ -141,6 +159,13 @@ export function registerInventoryRoutes(
     const movement = await inventoryService.getMovement(id);
     if (!movement) {
       throw new NotFoundError(`Inventory movement with ID '${id}' was not found`);
+    }
+    const scope = await authPolicy.resolveDepotScope(ctx);
+    if (scope.kind === "depot") {
+      const depots = await Promise.all([movement.source_location_id, movement.destination_location_id].map((locationId) => (locationId ? directory.locationDepot(locationId) : Promise.resolve(null))));
+      if (!depots.includes(scope.depotId)) {
+        throw new DepotForbiddenError("This movement belongs to another depot.");
+      }
     }
 
     sendJson(ctx.res, 200, {

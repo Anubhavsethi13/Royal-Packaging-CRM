@@ -14,6 +14,12 @@ export interface ApiRepositoryConfig<T extends { id: string }> {
   resourcePath: string;
   decodeDetail: DetailDecoder<T>;
   decodeItem?: (item: unknown) => T;
+  /**
+   * Translates the page's list query into the resource's query vocabulary. Returning null means
+   * no record of this resource can match (for example a filter value the backend has no state for),
+   * so an empty page is returned without a request.
+   */
+  mapListQuery?: (query: ListQuery | undefined) => ListQuery | undefined | null;
 }
 
 export function createUnavailableRepository<T extends { id: string }>(message: string): ApiRepository<T> {
@@ -75,7 +81,9 @@ function resourceDetailPath(resourcePath: string, id: string): string {
 export function createApiRepository<T extends { id: string }>(config: ApiRepositoryConfig<T>): ApiRepository<T> {
   return {
     async list(query) {
-      return apiListRequest<T>(config.resourcePath, query, config.decodeItem);
+      const mapped = config.mapListQuery ? config.mapListQuery(query) : query;
+      if (mapped === null) return { items: [], page: 1, pageSize: query?.pageSize ?? 0, total: 0, stale: false };
+      return apiListRequest<T>(config.resourcePath, mapped, config.decodeItem);
     },
     async getById(id) {
       try {
@@ -93,7 +101,9 @@ export function createApiRepository<T extends { id: string }>(config: ApiReposit
 export function createApiMutableRepository<T extends { id: string }, TCreateBody = T, TUpdateBody = Partial<Omit<T, 'id'>>>(config: ApiMutableRepositoryConfig<T, TCreateBody, TUpdateBody>): ApiMutableRepository<T> {
   return {
     async list(query) {
-      return apiListRequest<T>(config.resourcePath, query, config.decodeItem);
+      const mapped = config.mapListQuery ? config.mapListQuery(query) : query;
+      if (mapped === null) return { items: [], page: 1, pageSize: query?.pageSize ?? 0, total: 0, stale: false };
+      return apiListRequest<T>(config.resourcePath, mapped, config.decodeItem);
     },
     async getById(id) {
       try {

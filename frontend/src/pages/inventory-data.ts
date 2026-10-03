@@ -38,6 +38,30 @@ export async function loadInventoryList(repository: InventoryRepositoryReader, m
   return { items: filtered.slice((page - 1) * request.pageSize, page * request.pageSize), page, pageSize: request.pageSize, total: filtered.length, stale: result.stale };
 }
 
+/**
+ * Maps the backend inventory catalogue DTO (`product_code`, `name`, `total_box_quantity`,
+ * detail adds `balances`) to the InventoryRecord the pages render. The catalogue has no
+ * barcode, status, client, location name or last-movement time, so those are shown as
+ * not recorded rather than invented. Quantities are BOX (`total_box_quantity`).
+ */
+export function mapInventoryDtoToRecord(payload: unknown): InventoryRecord {
+  const dto = ((payload as { data?: unknown })?.data ?? payload) as Record<string, unknown>;
+  const name = dto.name;
+  const quantity = dto.total_box_quantity ?? dto.totalBoxQuantity;
+  return {
+    id: String(dto.id ?? ''),
+    barcode: '—',
+    sku: String(dto.product_code ?? dto.productCode ?? ''),
+    materialName: typeof name === 'string' && name.trim() ? name : 'Not recorded',
+    quantity: quantity === undefined || quantity === null ? '—' : String(quantity),
+    unit: 'BOX',
+    location: '—',
+    status: 'Not recorded',
+    clientName: '—',
+    lastMovement: '—',
+  };
+}
+
 export function loadInventoryDetail(repository: InventoryDetailReader, id: string): Promise<InventoryRecord | undefined> {
   return repository.getById(id);
 }

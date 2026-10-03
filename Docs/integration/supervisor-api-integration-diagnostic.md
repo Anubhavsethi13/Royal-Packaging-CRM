@@ -280,3 +280,12 @@ Verified with a role matrix test (`backend/tests/supervisor-integration-audit.te
 - **KPI results: connected.** `GET /kpi/results` and `/kpi/results/:id` calculate results on demand from completed tasks for active, calculable KPI definitions (no persistence, no migration, `kpi_snapshots` unused). See `Docs/api/kpi-results.md`.
 - New optional backend setting `OPERATIONS_TIMEZONE` (default `UTC`) defines operational days, weeks, and months.
 - All five Supervisor pages are now API-connected. Loading & unloading and KPI configuration remain read-only.
+
+### Status update: production hardening (2026-09-30)
+
+- **`OPERATIONS_TIMEZONE`:** required in production (`Asia/Kolkata`), validated as an IANA name; development and test default to `UTC`.
+- **`FRONTEND_ORIGIN`:** required in production. It must be an exact https origin with no wildcard.
+- **Session cookie:** the SameSite policy is configurable through `SESSION_COOKIE_SAMESITE`. `none` always adds `Secure`, and logout clears the cookie with the same attributes.
+- **Cross-domain login root cause:** a SameSite=Lax cookie is not sent on cross-site `fetch` from `*.vercel.app` to `*.onrender.com`. This was reproduced locally. The fix is the Vercel `/api` rewrite (recommended) or `SESSION_COOKIE_SAMESITE=none`. See `Docs/deployment/production-configuration.md`.
+- **KPI definition seed:** `npm run db:seed` idempotently seeds the 8 calculable V1 definitions. SLA definitions and targets are not seeded.
+- **Production status:** not yet verified against the real Vercel and Render deployment.

@@ -480,6 +480,45 @@ export interface ShiftEntryTruckTypesTable {
   truck_type_id: string;
 }
 
+export interface DepotDailyReportsTable {
+  id: string;
+  depot_id: string;
+  supervisor_employee_id: string | null;
+  report_date: string;
+  loading_count: number;
+  unloading_count: number;
+  start_time: string | null;
+  end_time: string | null;
+  labour_required: number | null;
+  labour_present: number | null;
+  status: Generated<string>;
+  submitted_at: Date | null;
+  submitted_by_user_id: string | null;
+  approved_at: Date | null;
+  approved_by_user_id: string | null;
+  created_by_user_id: string;
+  updated_by_user_id: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  version: Version;
+}
+
+export interface DepotDailyReportVehiclesTable {
+  report_id: string;
+  truck_type_id: string;
+  vehicle_count: number;
+}
+
+export interface DepotDailyReportEventsTable {
+  id: string;
+  report_id: string;
+  depot_id: string;
+  event_type: string;
+  event_at: Timestamp;
+  actor_user_id: string | null;
+  metadata: string | null;
+}
+
 export interface RoyalPackagingDatabase {
   users: UsersTable;
   sessions: SessionsTable;
@@ -521,6 +560,9 @@ export interface RoyalPackagingDatabase {
   shift_entries: ShiftEntriesTable;
   shift_entry_depots: ShiftEntryDepotsTable;
   shift_entry_truck_types: ShiftEntryTruckTypesTable;
+  depot_daily_reports: DepotDailyReportsTable;
+  depot_daily_report_vehicles: DepotDailyReportVehiclesTable;
+  depot_daily_report_events: DepotDailyReportEventsTable;
 }
 
 

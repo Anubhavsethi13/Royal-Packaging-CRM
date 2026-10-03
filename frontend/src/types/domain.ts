@@ -29,8 +29,9 @@ export interface ClientRecord {
   contactName: string;
   phone: string;
   status: 'Active' | 'On hold' | 'Prospect';
-  orderCount: number;
-  openOrders: number;
+  /** null for API records: the backend client record has no order counts. */
+  orderCount: number | null;
+  openOrders: number | null;
   lastActivity: string;
   segment: string;
 }
@@ -46,8 +47,10 @@ export interface OrderRecord {
   status: 'Draft' | 'Confirmed' | 'In production' | 'Partially fulfilled' | 'Ready' | 'Dispatched' | 'Completed' | 'Cancelled';
   priority: 'Low' | 'Normal' | 'High' | 'Urgent';
   dueAt: string;
-  fulfillment: number;
-  sla: 'On track' | 'At risk' | 'Breach risk';
+  /** null for API records: the backend order has no fulfilment percentage. */
+  fulfillment: number | null;
+  /** 'Not configured' for API records: no order SLA rule exists (V1 freeze). */
+  sla: 'On track' | 'At risk' | 'Breach risk' | 'Not configured';
   items?: OrderItemRecord[];
   activity?: ActivityRecord[];
 }
@@ -62,7 +65,8 @@ export interface InventoryRecord {
   legacyWeightKg?: string;
   legacyVolumeM3?: string;
   location: string;
-  status: 'Available' | 'Reserved' | 'Staged' | 'Damaged';
+  /** 'Not recorded' for API records: the inventory catalogue has no status. */
+  status: 'Available' | 'Reserved' | 'Staged' | 'Damaged' | 'Not recorded';
   clientName: string;
   lastMovement: string;
   reservation?: string;
@@ -73,13 +77,15 @@ export interface EmployeeRecord {
   id: string;
   code: string;
   name: string;
-  role: 'Supervisor' | 'Loader' | 'Picker' | 'Operator';
+  /** 'Not recorded' for API records: the backend has no employee job role. */
+  role: 'Supervisor' | 'Loader' | 'Picker' | 'Operator' | 'Not recorded';
   depot: string;
   status: 'Active' | 'On leave' | 'Inactive';
   productivity: string;
   kpi: string;
   shift: string;
-  tasks: number;
+  /** null for API records: the backend has no per-employee task count. */
+  tasks: number | null;
 }
 
 export interface TaskRecord {

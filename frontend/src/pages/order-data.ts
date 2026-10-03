@@ -88,13 +88,12 @@ export function mapOrderDtoToRecord(payload: unknown): OrderRecord {
         ? rawDueAt.toLocaleDateString()
         : 'Pending schedule');
 
-  const fulfillment = typeof dto.fulfillment === 'number'
-    ? dto.fulfillment
-    : (status === 'Completed' || status === 'Dispatched' ? 100 : status === 'Ready' ? 80 : status === 'In production' ? 40 : 0);
+  // The backend order has no fulfilment percentage or SLA; neither is derived from status or priority.
+  const fulfillment = typeof dto.fulfillment === 'number' ? dto.fulfillment : null;
 
-  const sla = typeof dto.sla === 'string'
+  const sla: OrderRecord['sla'] = typeof dto.sla === 'string'
     ? (dto.sla as OrderRecord['sla'])
-    : (priority === 'Urgent' ? 'At risk' : 'On track');
+    : 'Not configured';
 
   const items = Array.isArray(dto.items) && dto.items.length > 0
     ? (dto.items as Array<Record<string, unknown>>).map((item, index) => ({

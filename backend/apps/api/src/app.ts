@@ -1,6 +1,6 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import type { ApplicationConfig } from "@royal-packaging/config";
-import { parseAllowedOrigins } from "@royal-packaging/config";
+import { DEVELOPMENT_FRONTEND_ORIGIN, parseAllowedOrigins } from "@royal-packaging/config";
 import type { DatabaseConnection } from "@royal-packaging/db";
 import {
   type AuthorizationPolicy,
@@ -21,6 +21,7 @@ import { PayrollService } from "./modules/payroll/payroll-service.js";
 import { QualityService } from "./modules/quality/quality-service.js";
 import { ReportService } from "./modules/reports/report-service.js";
 import { ShiftEntryService } from "./modules/shift-entries/shift-entry-service.js";
+import { DailyReportService } from "./modules/daily-reports/daily-report-service.js";
 import { TaskService } from "./modules/warehouse/task-service.js";
 import { WarehouseOrchestrator } from "./modules/warehouse/warehouse-orchestrator.js";
 import { WarehouseReadService } from "./modules/warehouse/warehouse-read-service.js";
@@ -40,6 +41,8 @@ import { registerQualityRoutes } from "./routes/quality-routes.js";
 import { registerReportRoutes } from "./routes/report-routes.js";
 import { registerResyncRoutes } from "./routes/resync-routes.js";
 import { registerShiftEntryRoutes } from "./routes/shift-entry-routes.js";
+import { registerDailyReportRoutes } from "./routes/daily-report-routes.js";
+import { DepotDirectory } from "./middleware/depot-scope.js";
 import { registerTaskRoutes } from "./routes/task-routes.js";
 import { registerWarehouseRoutes } from "./routes/warehouse-routes.js";
 import { registerWarehouseOperationsRoutes } from "./routes/warehouse-operations-routes.js";
@@ -65,6 +68,7 @@ export interface ApiAppOptions {
   readonly reportService?: ReportService;
   readonly shiftEntryService?: ShiftEntryService;
   readonly warehouseReadService?: WarehouseReadService;
+  readonly dailyReportService?: DailyReportService;
 }
 
 export interface ApiApp {
@@ -87,6 +91,7 @@ export interface ApiApp {
     readonly reports: ReportService;
     readonly shiftEntries: ShiftEntryService;
     readonly warehouseRead: WarehouseReadService;
+    readonly dailyReports: DailyReportService;
   };
   readonly authorizationPolicy: AuthorizationPolicy;
   handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void>;
@@ -103,7 +108,7 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     options.authService ??
     new AuthService({
       database,
-      ...(appConfig ? { appConfig: { NODE_ENV: appConfig.NODE_ENV } } : {})
+      ...(appConfig ? { appConfig: { NODE_ENV: appConfig.NODE_ENV, SESSION_COOKIE_SAMESITE: appConfig.SESSION_COOKIE_SAMESITE } } : {})
     });
 
   const rbacService =
@@ -141,12 +146,15 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   const auditService = options.auditService ?? new AuditService({ database });
   const kpiService =
     options.kpiService ??
-    new KpiService({ database, ...(appConfig?.OPERATIONS_TIMEZONE ? { timeZone: appConfig.OPERATIONS_TIMEZONE } : {}) });
+    new KpiService({ database, ...(appConfig ? { timeZone: appConfig.OPERATIONS_TIMEZONE } : {}) });
   const dashboardService = options.dashboardService ?? new DashboardService({ database });
   const payrollService = options.payrollService ?? new PayrollService({ database });
   const reportService = options.reportService ?? new ReportService({ database });
   const shiftEntryService = options.shiftEntryService ?? new ShiftEntryService({ database });
   const warehouseReadService = options.warehouseReadService ?? new WarehouseReadService({ database });
+  const dailyReportService =
+    options.dailyReportService ??
+    new DailyReportService({ database, ...(appConfig ? { timeZone: appConfig.OPERATIONS_TIMEZONE } : {}) });
 
   // Default to server-side authoritative RBAC policy
   const authorizationPolicy =
@@ -156,9 +164,12 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
       rbacService
     });
 
+  // Depot isolation look-ups shared by every depot-scoped route group.
+  const depotDirectory = new DepotDirectory(database);
+
   const router = new Router();
 
-  const allowedOrigins = parseAllowedOrigins(appConfig?.FRONTEND_ORIGIN ?? "http://localhost:5173");
+  const allowedOrigins = parseAllowedOrigins(appConfig?.FRONTEND_ORIGIN ?? DEVELOPMENT_FRONTEND_ORIGIN);
   router.configureCors({ allowedOrigins, allowCredentials: true });
 
   // In-memory, single-instance rate limiter (see rate-limit-middleware.ts
@@ -170,23 +181,24 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
 
   // Register route groups
   registerHealthRoutes(router, database);
-  registerAuthRoutes(router, authService, { isProduction, rbacService });
-  registerTaskRoutes(router, authService, taskService, orchestrator, authorizationPolicy);
-  registerInventoryRoutes(router, authService, inventoryService, authorizationPolicy);
-  registerQualityRoutes(router, authService, qualityService, authorizationPolicy);
+  registerAuthRoutes(router, authService, { isProduction, rbacService, cookieSameSite: appConfig?.SESSION_COOKIE_SAMESITE ?? "lax" });
+  registerTaskRoutes(router, authService, taskService, orchestrator, authorizationPolicy, depotDirectory);
+  registerInventoryRoutes(router, authService, inventoryService, authorizationPolicy, depotDirectory);
+  registerQualityRoutes(router, authService, qualityService, authorizationPolicy, depotDirectory);
   registerIncentiveRoutes(router, authService, incentiveService, authorizationPolicy);
   registerClientsRoutes(router, authService, clientsService, authorizationPolicy);
   registerOrdersRoutes(router, authService, ordersService, authorizationPolicy);
-  registerOrganizationRoutes(router, authService, organizationService, authorizationPolicy);
+  registerOrganizationRoutes(router, authService, organizationService, authorizationPolicy, depotDirectory);
   registerWarehouseRoutes(router, authService, inventoryService, taskService, database, authorizationPolicy);
   registerAuditRoutes(router, authService, auditService, authorizationPolicy);
-  registerKpiRoutes(router, authService, kpiService, authorizationPolicy);
-  registerDashboardRoutes(router, authService, dashboardService, authorizationPolicy);
-  registerResyncRoutes(router, authService, taskService, inventoryService, kpiService, authorizationPolicy);
+  registerKpiRoutes(router, authService, kpiService, authorizationPolicy, depotDirectory);
+  registerDashboardRoutes(router, authService, dashboardService, authorizationPolicy, depotDirectory);
+  registerResyncRoutes(router, authService, taskService, inventoryService, kpiService, authorizationPolicy, depotDirectory);
   registerPayrollRoutes(router, authService, payrollService, authorizationPolicy);
   registerReportRoutes(router, authService, reportService, authorizationPolicy);
-  registerShiftEntryRoutes(router, authService, shiftEntryService, authorizationPolicy);
-  registerWarehouseOperationsRoutes(router, authService, warehouseReadService, authorizationPolicy);
+  registerShiftEntryRoutes(router, authService, shiftEntryService, authorizationPolicy, depotDirectory);
+  registerWarehouseOperationsRoutes(router, authService, warehouseReadService, authorizationPolicy, depotDirectory);
+  registerDailyReportRoutes(router, authService, dailyReportService, authorizationPolicy);
 
   const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     await router.handle(req, res);
@@ -223,7 +235,8 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
       payroll: payrollService,
       reports: reportService,
       shiftEntries: shiftEntryService,
-      warehouseRead: warehouseReadService
+      warehouseRead: warehouseReadService,
+      dailyReports: dailyReportService
     },
     authorizationPolicy,
     handleRequest,

@@ -5,6 +5,7 @@ import {
   requireAuth,
   requireAuthorization
 } from "../middleware/auth-middleware.js";
+import { assertDepotInScope, type DepotDirectory } from "../middleware/depot-scope.js";
 import { BadRequestError, ForbiddenError, HttpError, NotFoundError } from "../middleware/error-handler.js";
 import type { AuthService } from "../modules/identity/auth-service.js";
 import type { OperationScope, WarehouseReadService } from "../modules/warehouse/warehouse-read-service.js";
@@ -23,7 +24,8 @@ export function registerWarehouseOperationsRoutes(
   router: Router,
   authService: AuthService,
   readService: WarehouseReadService,
-  authPolicy: AuthorizationPolicy
+  authPolicy: AuthorizationPolicy,
+  directory: DepotDirectory
 ): void {
   const auth = requireAuth(authService);
   const authz = (action: string) => requireAuthorization(authPolicy, action);
@@ -31,7 +33,9 @@ export function registerWarehouseOperationsRoutes(
   /** null => the caller has no personal queue (no active employee profile). */
   const resolveScope = async (ctx: ApiContext): Promise<OperationScope | null> => {
     if (await authPolicy.evaluate(ctx, "warehouse:read_all_operations")) {
-      return {};
+      // Depot-confined management (Supervisor) sees every task of their own depot only.
+      const depotScope = await authPolicy.resolveDepotScope(ctx);
+      return depotScope.kind === "depot" ? { depotId: depotScope.depotId } : {};
     }
     const employeeId = await readService.findActiveEmployeeId(ctx.user!.id);
     return employeeId ? { employeeId } : null;
@@ -57,6 +61,9 @@ export function registerWarehouseOperationsRoutes(
     });
 
     await assertWarehouse(filter.warehouse_code);
+    const depotScope = await authPolicy.resolveDepotScope(ctx);
+    await directory.assertWarehouseCodeInScope(depotScope, filter.warehouse_code);
+    await directory.assertEmployeesInScope(depotScope, [filter.employee_id]);
     if (filter.employee_id && !(await readService.employeeExists(filter.employee_id))) {
       throw new HttpError(400, "INVALID_EMPLOYEE", `Employee '${filter.employee_id}' does not exist.`, [
         { field: "employee_id", code: "invalid_employee", message: `Employee '${filter.employee_id}' does not exist.` }
@@ -88,6 +95,10 @@ export function registerWarehouseOperationsRoutes(
     if (!scope) {
       throw new ForbiddenError("This task is not assigned to you.");
     }
+    const task = await directory.taskDepot(id);
+    if (task.exists) {
+      assertDepotInScope(await authPolicy.resolveDepotScope(ctx), task.depotId, "This task belongs to another depot.");
+    }
 
     const operation = await readService.getOperation(id, scope);
     if (operation) {
@@ -110,7 +121,9 @@ export function registerWarehouseOperationsRoutes(
       search: ctx.query.get("search") ?? undefined
     });
     await assertWarehouse(filter.warehouse_code);
-    const page = await readService.listLocations(filter, { limit: pagination.pageSize, offset: pagination.offset });
+    const depotScope = await authPolicy.resolveDepotScope(ctx);
+    await directory.assertWarehouseCodeInScope(depotScope, filter.warehouse_code);
+    const page = await readService.listLocations(filter, { limit: pagination.pageSize, offset: pagination.offset }, depotScope.kind === "depot" ? depotScope.depotId : undefined);
     sendList(ctx.res, withCamelCaseMirror(page.items), pagination, page.total);
   });
 }

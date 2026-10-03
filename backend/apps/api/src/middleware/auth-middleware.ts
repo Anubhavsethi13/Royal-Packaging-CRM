@@ -4,6 +4,7 @@ import type { RBACService } from "../modules/identity/rbac-service.js";
 import { DEFAULT_SESSION_COOKIE_NAME } from "../modules/identity/session.js";
 import type { ApiContext, Middleware } from "../router.js";
 import { ForbiddenError, UnauthorizedError } from "./error-handler.js";
+import { ALL_DEPOTS, SELF_SCOPE, type DepotScope } from "./depot-scope.js";
 
 /**
  * Extracts session token from HTTP cookie or Authorization header.
@@ -81,6 +82,8 @@ export type AuthorizationEvaluator = (
 
 export interface AuthorizationPolicy {
   readonly evaluate: AuthorizationEvaluator;
+  /** The caller's depot reach, decided server-side from the session (see depot-scope.ts). */
+  resolveDepotScope(ctx: ApiContext): Promise<DepotScope>;
 }
 
 /**
@@ -91,6 +94,10 @@ export class FailClosedAuthorizationPolicy implements AuthorizationPolicy {
   public evaluate(): boolean {
     return false;
   }
+
+  public async resolveDepotScope(): Promise<DepotScope> {
+    return SELF_SCOPE;
+  }
 }
 
 /**
@@ -99,6 +106,10 @@ export class FailClosedAuthorizationPolicy implements AuthorizationPolicy {
 export class PermissiveAuthorizationPolicy implements AuthorizationPolicy {
   public evaluate(): boolean {
     return true;
+  }
+
+  public async resolveDepotScope(): Promise<DepotScope> {
+    return ALL_DEPOTS;
   }
 }
 
@@ -111,7 +122,11 @@ export interface DatabaseRBACPolicyConfig {
  * Authoritative Server-Side RBAC Authorization Policy (B-01, B-02).
  *
  * Rules:
- * - Roles: SUPER_ADMIN, MAIN_ADMIN, ADMIN, MANAGER, EMPLOYEE.
+ * - Roles (highest first): SUPER_ADMIN, MAIN_ADMIN, ADMIN, ACCOUNTANT, MANAGER/SUPERVISOR, EMPLOYEE ("Others").
+ * - Incentives and payroll (every incentive:* and payroll:* action): ONLY Super Admin.
+ *   Payroll entries are snapshots of approved incentive amounts, so they are incentive data.
+ * - ACCOUNTANT: read-only reporting role (dashboard, reports, KPI results, warehouse and
+ *   task reads, audit); no writes, no KPI configuration, no incentives or payroll.
  * - Task Assignment (task:assign, task:unassign): Super Admin, Main Admin, Admin, Manager. (Employee NOT allowed)
  * - Task Cancellation (task:cancel): Super Admin, Main Admin, Admin, Manager. (Employee NOT allowed)
  * - Task Reopen (task:reopen): Super Admin, Main Admin, Admin. (Manager, Employee NOT allowed)
@@ -149,17 +164,23 @@ export class DatabaseRBACAuthorizationPolicy implements AuthorizationPolicy {
     const isAdmin = roles.includes("ADMIN");
     const isManager = roles.includes("MANAGER") || roles.includes("SUPERVISOR");
     const isEmployee = roles.includes("EMPLOYEE");
+    const isAccountant = roles.includes("ACCOUNTANT");
 
     const isApprovedRole = isSuperAdmin || isMainAdmin || isAdmin || isManager || isEmployee;
     const isAdminTier = isSuperAdmin || isMainAdmin || isAdmin;
     const isManagementTier = isAdminTier || isManager;
+    // Read-only reporting visibility across all depots: management plus Accountant.
+    const isReportingReader = isManagementTier || isAccountant;
 
     switch (action) {
-      // 1. Incentive / Payroll Approval & Operations Authority: ONLY Super Admin (FND-18A)
+      // 1. Incentives and payroll are privileged: ONLY Super Admin, for reads and writes alike.
+      case "incentive:read":
       case "incentive:approve":
       case "incentive:record_kot":
       case "incentive:record_penalty":
       case "incentive:calculate":
+      case "payroll:read":
+      case "payroll:write":
       case "payroll:approve":
       case "financial:approve":
         return isSuperAdmin;
@@ -234,8 +255,7 @@ export class DatabaseRBACAuthorizationPolicy implements AuthorizationPolicy {
       case "quality:read_history":
       case "quality:read_record":
       case "quality:read_photos":
-      case "incentive:read":
-        return isApprovedRole;
+        return isApprovedRole || isAccountant;
 
       // 9. Commercial domain (Clients/Orders/Employees) - Assumption: read
       // access is open to every approved role (matches existing read
@@ -245,7 +265,7 @@ export class DatabaseRBACAuthorizationPolicy implements AuthorizationPolicy {
       case "client:read":
       case "order:read":
       case "employee:read":
-        return isApprovedRole;
+        return isApprovedRole || isAccountant;
 
       case "client:write":
       case "order:write":
@@ -256,36 +276,32 @@ export class DatabaseRBACAuthorizationPolicy implements AuthorizationPolicy {
 
       // 10. Inventory catalog reads: same tier as other inventory reads.
       case "inventory:read_catalog":
-        return isApprovedRole;
+        return isApprovedRole || isAccountant;
 
       // 11. Warehouse compat: scan barcode, list tasks, route lookup are
       // operational reads available to any approved role.
       case "warehouse:scan":
+        return isApprovedRole;
       case "warehouse:read_tasks":
       case "warehouse:read_route":
-        return isApprovedRole;
+        return isApprovedRole || isAccountant;
 
       // 12. Audit / KPI / Dashboard / Resync
       case "audit:read":
-        return isManagementTier;
+        return isReportingReader;
       case "kpi:read":
       case "dashboard:read":
+        return isApprovedRole || isAccountant;
       case "resync:read":
         return isApprovedRole;
 
       // 13. Report domain
       case "report:read":
-        return isApprovedRole;
+        return isApprovedRole || isAccountant;
       case "report:execute":
-        return isManagementTier;
+        return isReportingReader;
 
-      // 14. Payroll domain (payroll:approve already exists above -
-      // Super Admin only). Read access mirrors other financial reads,
-      // and creating entries/decisions is a management-tier operation.
-      case "payroll:read":
-        return isApprovedRole;
-      case "payroll:write":
-        return isManagementTier;
+      // 14. Payroll domain: see rule 1 (Super Admin only).
 
       // 15. Daily shift entries (KPI_DAILY_SHIFT_TRACKING V1).
       // Creating and listing one's own entries is open to every approved
@@ -311,19 +327,40 @@ export class DatabaseRBACAuthorizationPolicy implements AuthorizationPolicy {
       // consistent with every other read in this policy).
       case "warehouse:read_operations":
       case "location:read":
-        return isApprovedRole;
+        return isApprovedRole || isAccountant;
       case "warehouse:read_all_operations":
-        return isManagementTier;
+        return isReportingReader;
       case "kpi:read_all":
-        return isManagementTier;
-      // KPI configuration (definitions, targets, thresholds) is a management
-      // read; there is no depot/team scope, so it covers every warehouse.
+        return isReportingReader;
+      // Depot KPI dashboard: management (Supervisor confined to own depot by the
+      // depot scope) and Accountant (read-only). Others use their own KPI results.
+      case "kpi:read_depot":
+        return isReportingReader;
+      // KPI configuration (definitions, targets, thresholds): Super Admin and
+      // Admin only (product access matrix). Supervisor, Accountant and Others
+      // have no KPI configuration access.
       case "kpi:read_config":
-        return isManagementTier;
+        return isAdminTier;
       // KPI results: every approved role may open them; the route narrows
-      // non-management callers (no `kpi:read_all`) to their own employee.
+      // callers without `kpi:read_all` to their own employee.
       case "kpi:read_results":
-        return isApprovedRole;
+        return isApprovedRole || isAccountant;
+
+      // 17. Supervisor daily depot reports.
+      // - Write (create/update draft/submit): Supervisor/Manager and admin tier,
+      //   for any depot (they name the depot; `daily_report:write_all`).
+      //   Supervisors have organization-wide operational scope and no fixed depot
+      //   (V1 business decision D5/D6, Docs/product/v1-business-decision-freeze.md).
+      // - Read: management tier and Accountant, all depots (`daily_report:read_all`).
+      // - Others (EMPLOYEE) have no daily report access.
+      case "daily_report:read":
+        return isReportingReader;
+      case "daily_report:read_all":
+        return isReportingReader;
+      case "daily_report:write":
+        return isManagementTier;
+      case "daily_report:write_all":
+        return isManagementTier;
 
       case "shift:read": {
         if (isManagementTier) {
@@ -338,6 +375,35 @@ export class DatabaseRBACAuthorizationPolicy implements AuthorizationPolicy {
       default:
         return false;
     }
+  }
+
+  /**
+   * Depot reach for this request (memoised per request):
+   * - Super Admin, Main Admin, Admin, Accountant: all depots.
+   * - Supervisor/Manager: all depots. Supervisors are not assigned to a fixed
+   *   depot; they work across the organization's operational tasks and each
+   *   task carries its own depot context (V1 business decision D5/D6).
+   * - Everyone else: "self" (own-record rules).
+   */
+  public resolveDepotScope(ctx: ApiContext): Promise<DepotScope> {
+    const cached = this.depotScopes.get(ctx);
+    if (cached) return cached;
+    const resolved = this.computeDepotScope(ctx);
+    this.depotScopes.set(ctx, resolved);
+    return resolved;
+  }
+
+  private readonly depotScopes = new WeakMap<ApiContext, Promise<DepotScope>>();
+
+  private async computeDepotScope(ctx: ApiContext): Promise<DepotScope> {
+    if (!ctx.user?.id) {
+      throw new UnauthorizedError("Authentication required.");
+    }
+    const roles = (await this.rbacService.getUserRoles(ctx.user.id)).map((role) => role.toUpperCase());
+    if (["SUPER_ADMIN", "MAIN_ADMIN", "ADMIN", "ACCOUNTANT", "SUPERVISOR", "MANAGER"].some((role) => roles.includes(role))) {
+      return ALL_DEPOTS;
+    }
+    return SELF_SCOPE;
   }
 
   private async isShiftEntryOwner(userId: string, shiftEntryId: string): Promise<boolean> {

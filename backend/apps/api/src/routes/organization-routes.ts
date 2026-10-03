@@ -10,7 +10,8 @@ import {
   requireAuth,
   requireAuthorization
 } from "../middleware/auth-middleware.js";
-import { BadRequestError, NotFoundError } from "../middleware/error-handler.js";
+import { assertDepotInScope, DepotForbiddenError, depotFilterFor, type DepotDirectory, type DepotScope } from "../middleware/depot-scope.js";
+import { BadRequestError, ForbiddenError, NotFoundError } from "../middleware/error-handler.js";
 import type { AuthService } from "../modules/identity/auth-service.js";
 import type { OrganizationService } from "../modules/organization/organization-service.js";
 import type { ApiContext, Router } from "../router.js";
@@ -43,10 +44,25 @@ export function registerOrganizationRoutes(
   router: Router,
   authService: AuthService,
   organizationService: OrganizationService,
-  authPolicy: AuthorizationPolicy
+  authPolicy: AuthorizationPolicy,
+  directory: DepotDirectory
 ): void {
   const auth = requireAuth(authService);
   const authz = (action: string) => requireAuthorization(authPolicy, action);
+
+  /**
+   * Employee visibility: depot-confined callers (Supervisor) see and manage only
+   * employees of their own depot; callers without depot authority only their own
+   * profile; organisation-wide roles everyone. Decided from the session only.
+   */
+  const assertEmployeeVisible = async (ctx: ApiContext, scope: DepotScope, employeeId: string): Promise<void> => {
+    const employee = await directory.employeeDepot(employeeId);
+    if (!employee.exists) return; // the route answers 404
+    assertDepotInScope(scope, employee.depotId, "This employee belongs to another depot.");
+    if (scope.kind === "self" && (await directory.activeEmployeeOfUser(ctx.user!.id))?.id !== employeeId) {
+      throw new ForbiddenError("You may only view your own employee profile.");
+    }
+  };
 
   // GET /employees
   router.get("/employees", auth, authz("employee:read"), async (ctx: ApiContext) => {
@@ -65,12 +81,17 @@ export function registerOrganizationRoutes(
     }
     const search = ctx.query.get("search") ?? undefined;
 
-    const allEmployees = await organizationService.listEmployees({
+    const scope = await authPolicy.resolveDepotScope(ctx);
+    let allEmployees = await organizationService.listEmployees({
       department,
-      depot_id: cleanDepotId,
+      depot_id: depotFilterFor(scope, cleanDepotId),
       is_active: isActive,
       search
     });
+    if (scope.kind === "self") {
+      const own = await directory.activeEmployeeOfUser(ctx.user!.id);
+      allEmployees = allEmployees.filter((employee) => employee.id === own?.id);
+    }
 
     const sortBy = ctx.query.get("sortBy") ?? ctx.query.get("sort_by") ?? ctx.query.get("sort");
     const dir = sortDirection(ctx.query, "desc");
@@ -87,7 +108,9 @@ export function registerOrganizationRoutes(
     if (!parseResult.success) {
       throw parseResult.error;
     }
-    const employee = await organizationService.createEmployee(parseResult.data);
+    // A depot-confined caller can only add employees to their own depot.
+    const depotId = depotFilterFor(await authPolicy.resolveDepotScope(ctx), parseResult.data.depot_id);
+    const employee = await organizationService.createEmployee(depotId ? { ...parseResult.data, depot_id: depotId } : parseResult.data);
     sendJson(ctx.res, 201, { success: true, data: withCamelCaseMirror(employee) });
   });
 
@@ -97,6 +120,7 @@ export function registerOrganizationRoutes(
     if (!id || !uuidSchema.safeParse(id).success) {
       throw new BadRequestError("Invalid employee ID format");
     }
+    await assertEmployeeVisible(ctx, await authPolicy.resolveDepotScope(ctx), id);
     const employee = await organizationService.getEmployeeById(id);
     if (!employee) {
       throw new NotFoundError(`Employee with ID '${id}' was not found`);
@@ -114,6 +138,12 @@ export function registerOrganizationRoutes(
     if (!parseResult.success) {
       throw parseResult.error;
     }
+    const scope = await authPolicy.resolveDepotScope(ctx);
+    await assertEmployeeVisible(ctx, scope, id);
+    // A depot-confined caller cannot move an employee out of their depot.
+    if (scope.kind === "depot" && parseResult.data.depot_id !== undefined && parseResult.data.depot_id !== scope.depotId) {
+      throw new DepotForbiddenError("You can only assign employees to your own depot.");
+    }
     const employee = await organizationService.updateEmployee(id, parseResult.data);
     sendJson(ctx.res, 200, { success: true, data: withCamelCaseMirror(employee) });
   });
@@ -128,6 +158,7 @@ export function registerOrganizationRoutes(
     if (!parseResult.success) {
       throw parseResult.error;
     }
+    await assertEmployeeVisible(ctx, await authPolicy.resolveDepotScope(ctx), id);
     const employee = await organizationService.createShiftAssignment(id, parseResult.data);
     sendJson(ctx.res, 201, { success: true, data: withCamelCaseMirror(employee) });
   });

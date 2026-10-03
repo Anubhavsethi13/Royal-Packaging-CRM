@@ -13,6 +13,9 @@ import { repositories as mockRepositories } from '../mock/repositories';
 import type { AuditRecord, ClientRecord, EmployeeRecord, IncentiveRecord, InventoryRecord, KpiRecord, OrderRecord, PayrollRecord, ReportRecord, TaskRecord } from '../types/domain';
 import type { KpiResultReadModel } from '../kpi/kpi-result-domain';
 import { kpiResultsApiRepositoryConfig } from '../kpi/kpi-result-api';
+import { mapEmployeeDtoToRecord } from '../pages/employee-data';
+import { mapInventoryDtoToRecord } from '../pages/inventory-data';
+import { decodeTaskDetail, decodeTaskListItem, mapTaskListQuery } from '../pages/task-data';
 import {
   mapClientCreateBody,
   mapClientDtoToRecord,
@@ -122,9 +125,9 @@ export function createDefaultApiRepositoryConfiguration(): ApiRepositoryConfigur
   return {
     clients: clientsApiRepositoryConfig,
     orders: ordersApiRepositoryConfig,
-    inventory: { resourcePath: '/inventory', decodeDetail: decodePassthrough },
-    employees: { resourcePath: '/employees', decodeDetail: decodePassthrough },
-    tasks: { resourcePath: '/tasks', decodeDetail: decodePassthrough },
+    inventory: { resourcePath: '/inventory', decodeDetail: mapInventoryDtoToRecord, decodeItem: mapInventoryDtoToRecord },
+    employees: { resourcePath: '/employees', decodeDetail: mapEmployeeDtoToRecord, decodeItem: mapEmployeeDtoToRecord },
+    tasks: { resourcePath: '/warehouse/operations', decodeDetail: decodeTaskDetail, decodeItem: decodeTaskListItem, mapListQuery: mapTaskListQuery },
     kpis: { resourcePath: '/kpi/definitions', decodeDetail: decodePassthrough },
     kpiResults: kpiResultsApiRepositoryConfig,
     incentives: { resourcePath: '/incentives', decodeDetail: decodePassthrough },

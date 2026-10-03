@@ -23,7 +23,12 @@ export class DashboardService {
     this.database = config.database;
   }
 
-  public async getSummary(filter: DashboardFilter = {}): Promise<DashboardSummaryDTO> {
+  /**
+   * `includeIncentives` must come from the server-side authorization decision
+   * (`incentive:read`, Super Admin only); incentive totals are not even
+   * queried otherwise.
+   */
+  public async getSummary(filter: DashboardFilter = {}, options: { includeIncentives: boolean } = { includeIncentives: false }): Promise<DashboardSummaryDTO> {
     const [
       tasksByStatus,
       boxesHandled,
@@ -35,7 +40,7 @@ export class DashboardService {
       this.getTasksByStatus(filter),
       this.getBoxesHandled(filter),
       this.getQualitySummary(filter),
-      this.getIncentiveTotalsByStatus(filter),
+      options.includeIncentives ? this.getIncentiveTotalsByStatus(filter) : Promise.resolve(null),
       this.getInventoryStatusCounts(filter),
       this.getEmployeeCountsByDepartment(filter)
     ]);
@@ -44,11 +49,11 @@ export class DashboardService {
       tasksByStatus,
       boxesHandled,
       qualitySummary,
-      incentiveTotalsByStatus,
+      ...(incentiveTotalsByStatus ? { incentiveTotalsByStatus } : {}),
       inventoryStatusCounts,
       employeeCountsByDepartment,
       slaCompliance: null,
-      payrollStatus: null
+      ...(options.includeIncentives ? { payrollStatus: null } : {})
     };
   }
 

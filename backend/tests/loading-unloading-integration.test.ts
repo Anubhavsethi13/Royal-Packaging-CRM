@@ -112,6 +112,8 @@ before(async () => {
   ids.dep1 = crypto.randomUUID();
   await db.insertInto("depots").values({ id: ids.dep1, code: "DOCK-01", name: "Dock Depot", active: true }).execute();
 
+  // Everyone in this suite works at DOCK-01 (supervisors are depot-confined).
+  await db.updateTable("employees").set({ depot_id: ids.dep1 }).execute();
   const actor = supervisor.userId;
   ids.loadTask = (await tasks.createTask({ depot_id: ids.dep1, task_type: "LOADING", planned_box_quantity: 120 }, actor)).id;
   await tasks.assignTask({ task_id: ids.loadTask, employee_id: loader.employeeId as string }, actor);

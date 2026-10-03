@@ -4,6 +4,7 @@ export * from "./reports.js";
 export * from "./shift-summary.js";
 export * from "./configuration.js";
 export * from "./results.js";
+export * from "./depot-dashboard.js";
 
 export const listKpiSnapshotsFilterSchema = z.object({
   kpi_code: z.string().trim().min(1).optional(),
@@ -63,9 +64,11 @@ export interface DashboardSummaryDTO {
     readonly failCount: number;
     readonly averageDamageRate: number | null;
   };
-  readonly incentiveTotalsByStatus: Record<string, string>;
+  /** Present only for callers authorized to read incentives (Super Admin); omitted otherwise. */
+  readonly incentiveTotalsByStatus?: Record<string, string>;
   readonly inventoryStatusCounts: Record<string, number>;
   readonly employeeCountsByDepartment: Record<string, number>;
   readonly slaCompliance: null;
-  readonly payrollStatus: null;
+  /** Payroll is incentive data: present (always null today) only for callers authorized to read incentives. */
+  readonly payrollStatus?: null;
 }

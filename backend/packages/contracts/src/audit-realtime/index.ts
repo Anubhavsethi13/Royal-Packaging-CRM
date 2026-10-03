@@ -19,7 +19,8 @@ export type ListAuditLogsFilter = z.infer<typeof listAuditLogsFilterSchema>;
  */
 export interface AuditLogEntryDTO {
   readonly id: string;
-  readonly source: "task" | "incentive";
+  /** "daily_report" events carry `report_id` and `depot_id` in `metadata`. */
+  readonly source: "task" | "incentive" | "daily_report";
   readonly eventType: string;
   readonly eventAt: Date;
   readonly actorUserId: string | null;

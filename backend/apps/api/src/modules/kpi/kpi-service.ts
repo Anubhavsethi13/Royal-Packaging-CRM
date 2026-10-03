@@ -13,7 +13,9 @@ import type {
   KpiSummaryAppliedFilters,
   ListKpiSnapshotsFilter,
   ManagementKpiSummaryDTO,
-  ManagementKpiSummaryFilter
+  ManagementKpiSummaryFilter,
+  DepotDashboardDTO,
+  DepotDashboardQuery
 } from "@royal-packaging/contracts";
 import { ShiftEntryDomainError } from "@royal-packaging/contracts";
 import type { DatabaseConnection } from "@royal-packaging/db";
@@ -23,6 +25,7 @@ import type { KpiDataSource, KpiSourceFilter } from "./kpi-data-source.js";
 import { KpiConfigurationReader } from "./kpi-configuration-reader.js";
 import { KpiResultCalculator, type KpiResultScope } from "./kpi-result-calculator.js";
 import { ShiftEntryKpiSource } from "./shift-entry-kpi-source.js";
+import { DepotDashboardBuilder } from "./depot-dashboard.js";
 
 export interface KpiServiceConfig {
   readonly database: DatabaseConnection;
@@ -47,12 +50,19 @@ export class KpiService {
   private readonly shiftEntrySource: KpiDataSource;
   private readonly configuration: KpiConfigurationReader;
   private readonly results: KpiResultCalculator;
+  private readonly depotDashboard: DepotDashboardBuilder;
 
   public constructor(config: KpiServiceConfig) {
     this.database = config.database;
     this.shiftEntrySource = config.shiftEntrySource ?? new ShiftEntryKpiSource(config.database);
     this.configuration = new KpiConfigurationReader(config.database);
     this.results = new KpiResultCalculator(config.database, config.timeZone ?? "UTC");
+    this.depotDashboard = new DepotDashboardBuilder(config.database, this.results, config.timeZone ?? "UTC");
+  }
+
+  /** Depot KPI dashboard (null when the depot does not exist). `depotId` comes from the authorization layer. */
+  public getDepotDashboard(query: DepotDashboardQuery, depotId: string | undefined, allDepots: boolean, now: Date = new Date()): Promise<DepotDashboardDTO | null> {
+    return this.depotDashboard.build(query, depotId, allDepots, now);
   }
 
   /** KPI results calculated on demand from completed tasks for active, calculable KPI definitions. */
@@ -63,9 +73,10 @@ export class KpiService {
   /** One KPI result (with source references) by its id parts, or null. */
   public getResult(
     id: { kpiId: string; employeeId: string; period: KpiResultPeriodKind; start: string },
-    now: Date = new Date()
+    now: Date = new Date(),
+    scope: KpiResultScope = {}
   ): Promise<KpiResultDetailDTO | null> {
-    return this.results.get(id, now);
+    return this.results.get(id, now, scope);
   }
 
   public findActiveEmployeeId(userId: string): Promise<string | null> {
@@ -111,12 +122,15 @@ export class KpiService {
   /** Aggregate plus per-employee shift-entry KPIs across employees. */
   public async getManagementSummary(
     filter: ManagementKpiSummaryFilter,
-    page: { limit: number; offset: number }
+    page: { limit: number; offset: number },
+    scope: { employeeDepotId?: string } = {}
   ): Promise<ManagementKpiSummaryResult> {
     const resolved = await this.resolveFilter(filter, filter.employee_id);
+    // Depot isolation: a depot-confined caller only aggregates employees of their depot.
+    const source = scope.employeeDepotId ? { ...resolved.source, employeeDepotId: scope.employeeDepotId } : resolved.source;
     const [metrics, byEmployee] = await Promise.all([
-      this.shiftEntrySource.aggregate(resolved.source),
-      this.shiftEntrySource.aggregateByEmployee(resolved.source, page)
+      this.shiftEntrySource.aggregate(source),
+      this.shiftEntrySource.aggregateByEmployee(source, page)
     ]);
 
     return {
@@ -234,8 +248,8 @@ export class KpiService {
    * contribution to a KPI value) is out of scope: kpi_snapshots stores only
    * the computed value, not its constituent inputs.
    */
-  public async drillDown(kpiCode: string): Promise<KpiDrillDownDTO> {
-    const snapshots = await this.list({ kpi_code: kpiCode });
+  public async drillDown(kpiCode: string, scope: Pick<ListKpiSnapshotsFilter, "depot_id" | "employee_id"> = {}): Promise<KpiDrillDownDTO> {
+    const snapshots = await this.list({ ...scope, kpi_code: kpiCode });
     return { kpi_code: kpiCode, snapshots };
   }
 

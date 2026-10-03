@@ -15,7 +15,11 @@ describe('role-aware navigation', () => {
 
   it('keeps employee navigation focused on their work', () => {
     const ids = visibleNavigation(subject('EMPLOYEE')).flatMap((group) => group.items).map((item) => item.id);
-    expect(ids).toEqual(expect.arrayContaining(['dashboard', 'tasks', 'kpis', 'incentives']));
+    // Others see their own KPI results; KPI configuration is Super Admin/Admin only.
+    expect(ids).toEqual(expect.arrayContaining(['dashboard', 'tasks', 'kpi-results']));
+    expect(ids).not.toContain('kpis');
+    // Incentives are Super Admin only (product RBAC requirement).
+    expect(ids).not.toContain('incentives');
     expect(ids).not.toContain('access-control');
     expect(ids).not.toContain('payroll');
   });

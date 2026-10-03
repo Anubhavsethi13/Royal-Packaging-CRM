@@ -108,6 +108,8 @@ before(async () => {
     { id: ids.dep1, code: "DEP-01", name: "Main Depot", active: true },
     { id: ids.dep2, code: "DEP-02", name: "Annex Depot", active: true }
   ]).execute();
+  // The supervisor works in DEP-01 (depot isolation).
+  await db.updateTable("employees").set({ depot_id: ids.dep1 }).where("id", "=", supervisor.employeeId as string).execute();
   ids.zoneA = crypto.randomUUID();
   ids.locA1 = crypto.randomUUID();
   ids.locA2 = crypto.randomUUID();
@@ -156,8 +158,8 @@ after(async () => {
 // Directory
 // ---------------------------------------------------------------------------
 
-test("WO-I1: supervisor sees every task with joined references, BOX quantities, and no invented SLA", async () => {
-  const body = await list(supervisor);
+test("WO-I1: the organisation-wide view lists every task with joined references, BOX quantities, and no invented SLA", async () => {
+  const body = await list(admin);
   assert.equal(body.success, true);
   assert.equal(body.meta.total, 5);
   const byId = new Map(body.data.map((operation) => [operation.id, operation]));
@@ -184,40 +186,53 @@ test("WO-I1: supervisor sees every task with joined references, BOX quantities, 
   assert.deepEqual(byId.get(ids.otherPending)?.assignees, []);
 });
 
-test("WO-I2: admin and supervisor share the unscoped (management) view", async () => {
+test("WO-I2: admin and supervisors (no fixed depot) see every depot's tasks and locations", async () => {
   assert.equal((await list(admin)).meta.total, 5);
+  // Supervisors have organization-wide task scope (V1 decision D5/D6): the same view as Admin.
+  const all = await (await get(admin, "/warehouse/operations")).json() as ListBody<Operation>;
+  const supervisorView = await (await get(supervisor, "/warehouse/operations")).json() as ListBody<Operation>;
+  assert.deepEqual(new Set(supervisorView.data.map((operation) => operation.id)), new Set(all.data.map((operation) => operation.id)));
+  assert.equal(supervisorView.meta.total, 5);
+  assert.equal((await get(supervisor, "/warehouse/operations?warehouse_code=dep-02")).status, 200);
+  assert.equal((await get(supervisor, `/warehouse/operations?employee_id=${empB.employeeId}`)).status, 200);
+  assert.equal((await get(supervisor, `/warehouse/operations/${ids.unloadActive}`)).status, 200);
+  assert.equal((await get(supervisor, `/warehouse/operations/${ids.loadDone}`)).status, 200);
+  const adminLocations = await (await get(admin, "/locations")).json() as ListBody<{ code: string }>;
+  const locations = await (await get(supervisor, "/locations")).json() as ListBody<{ code: string }>;
+  assert.deepEqual(new Set(locations.data.map((location) => location.code)), new Set(adminLocations.data.map((location) => location.code)));
+  assert.equal((await get(supervisor, "/locations?warehouse_code=DEP-02")).status, 200);
 });
 
 test("WO-I3: loading and unloading filters use the operation classification", async () => {
-  assert.deepEqual((await list(supervisor, "?operation_type=LOADING")).data.map((operation) => operation.id), [ids.loadDone]);
-  assert.deepEqual((await list(supervisor, "?operation_type=UNLOADING")).data.map((operation) => operation.id), [ids.unloadActive]);
-  assert.deepEqual(new Set((await list(supervisor, "?operation_type=OTHER")).data.map((operation) => operation.id)), new Set([ids.otherPending, ids.untyped]));
+  assert.deepEqual((await list(admin, "?operation_type=LOADING")).data.map((operation) => operation.id), [ids.loadDone]);
+  assert.deepEqual((await list(admin, "?operation_type=UNLOADING")).data.map((operation) => operation.id), [ids.unloadActive]);
+  assert.deepEqual(new Set((await list(admin, "?operation_type=OTHER")).data.map((operation) => operation.id)), new Set([ids.otherPending, ids.untyped]));
 });
 
 test("WO-I4: status, warehouse, employee, and search filters", async () => {
-  assert.deepEqual((await list(supervisor, "?status=IN_PROGRESS")).data.map((operation) => operation.id), [ids.unloadActive]);
-  assert.equal((await list(supervisor, "?warehouse_code=dep-02")).meta.total, 2);
-  assert.deepEqual(new Set((await list(supervisor, `?employee_id=${empA.employeeId}`)).data.map((operation) => operation.id)), new Set([ids.loadDone, ids.pickAssigned]));
-  assert.deepEqual((await list(supervisor, "?search=Ravi")).data.map((operation) => operation.id), [ids.unloadActive]);
-  assert.deepEqual((await list(supervisor, "?search=CB-500")).data.map((operation) => operation.id), [ids.loadDone]);
+  assert.deepEqual((await list(admin, "?status=IN_PROGRESS")).data.map((operation) => operation.id), [ids.unloadActive]);
+  assert.equal((await list(admin, "?warehouse_code=dep-02")).meta.total, 2);
+  assert.deepEqual(new Set((await list(admin, `?employee_id=${empA.employeeId}`)).data.map((operation) => operation.id)), new Set([ids.loadDone, ids.pickAssigned]));
+  assert.deepEqual((await list(admin, "?search=Ravi")).data.map((operation) => operation.id), [ids.unloadActive]);
+  assert.deepEqual((await list(admin, "?search=CB-500")).data.map((operation) => operation.id), [ids.loadDone]);
   const code = `TSK-${ids.pickAssigned.replaceAll("-", "").slice(0, 8).toUpperCase()}`;
-  assert.deepEqual((await list(supervisor, `?search=${code}`)).data.map((operation) => operation.id), [ids.pickAssigned]);
-  assert.equal((await list(supervisor, "?search=%25")).meta.total, 0); // LIKE wildcards are literal
+  assert.deepEqual((await list(admin, `?search=${code}`)).data.map((operation) => operation.id), [ids.pickAssigned]);
+  assert.equal((await list(admin, "?search=%25")).meta.total, 0); // LIKE wildcards are literal
 });
 
 test("WO-I5: pagination is done in SQL with standard page meta", async () => {
-  const first = await list(supervisor, "?page=1&pageSize=2");
-  const third = await list(supervisor, "?page=3&pageSize=2");
+  const first = await list(admin, "?page=1&pageSize=2");
+  const third = await list(admin, "?page=3&pageSize=2");
   assert.equal(first.data.length, 2);
   assert.deepEqual(first.meta, { page: 1, pageSize: 2, total: 5, totalPages: 3, hasNext: true, hasPrevious: false } as never);
   assert.equal(third.data.length, 1);
-  const all = [...first.data, ...(await list(supervisor, "?page=2&pageSize=2")).data, ...third.data].map((operation) => operation.id);
+  const all = [...first.data, ...(await list(admin, "?page=2&pageSize=2")).data, ...third.data].map((operation) => operation.id);
   assert.equal(new Set(all).size, 5);
 });
 
 test("WO-I6: invalid filters are 400 validation errors", async () => {
   for (const query of ["?status=STARTED", "?operation_type=DOCKING", "?employee_id=abc", "?page=0"]) {
-    const res = await get(supervisor, `/warehouse/operations${query}`);
+    const res = await get(admin, `/warehouse/operations${query}`);
     assert.equal(res.status, 400, query);
     assert.equal(((await res.json()) as ErrorBody).code, "VALIDATION_FAILED");
   }
@@ -259,7 +274,7 @@ test("WO-I9: unauthenticated is 401 and users without an approved role are 403",
 // ---------------------------------------------------------------------------
 
 test("WO-I10: detail includes the full activity timeline with actors", async () => {
-  const res = await get(supervisor, `/warehouse/operations/${ids.loadDone}`);
+  const res = await get(admin, `/warehouse/operations/${ids.loadDone}`);
   assert.equal(res.status, 200);
   const data = ((await res.json()) as { data: Operation }).data;
   assert.equal(data.id, ids.loadDone);
@@ -272,10 +287,10 @@ test("WO-I11: detail scope: own task 200, someone else's 403, missing 403 for em
   assert.equal((await get(empA, `/warehouse/operations/${ids.unloadActive}`)).status, 403);
   assert.equal((await get(empA, `/warehouse/operations/${crypto.randomUUID()}`)).status, 403);
   assert.equal((await get(noProfile, `/warehouse/operations/${ids.loadDone}`)).status, 403);
-  const missing = await get(supervisor, `/warehouse/operations/${crypto.randomUUID()}`);
+  const missing = await get(admin, `/warehouse/operations/${crypto.randomUUID()}`);
   assert.equal(missing.status, 404);
   assert.equal(((await missing.json()) as ErrorBody).code, "NOT_FOUND");
-  assert.equal((await get(supervisor, "/warehouse/operations/not-a-uuid")).status, 400);
+  assert.equal((await get(admin, "/warehouse/operations/not-a-uuid")).status, 400);
 });
 
 // ---------------------------------------------------------------------------
@@ -285,7 +300,7 @@ test("WO-I11: detail scope: own task 200, someone else's 403, missing 403 for em
 interface LocationBody { id: string; code: string; name: string; active: boolean; warehouse: { code: string; name: string }; parent: { code: string } | null; box_on_hand: number }
 
 test("WO-I12: locations list existing rows with depot, parent, and real BOX on hand", async () => {
-  const res = await get(supervisor, "/locations");
+  const res = await get(admin, "/locations");
   assert.equal(res.status, 200);
   const body = (await res.json()) as ListBody<LocationBody>;
   assert.equal(body.meta.total, 4);
@@ -297,25 +312,25 @@ test("WO-I12: locations list existing rows with depot, parent, and real BOX on h
 });
 
 test("WO-I13: location filters, pagination, and validation", async () => {
-  const filtered = (await (await get(supervisor, "/locations?warehouse_code=dep-02")).json()) as ListBody<LocationBody>;
+  const filtered = (await (await get(admin, "/locations?warehouse_code=dep-02")).json()) as ListBody<LocationBody>;
   assert.deepEqual(filtered.data.map((location) => location.code), ["B-01"]);
-  const inactive = (await (await get(supervisor, "/locations?active=false")).json()) as ListBody<LocationBody>;
+  const inactive = (await (await get(admin, "/locations?active=false")).json()) as ListBody<LocationBody>;
   assert.deepEqual(inactive.data.map((location) => location.code), ["A-02"]);
-  const search = (await (await get(supervisor, "/locations?search=receiving")).json()) as ListBody<LocationBody>;
+  const search = (await (await get(admin, "/locations?search=receiving")).json()) as ListBody<LocationBody>;
   assert.deepEqual(search.data.map((location) => location.code), ["A-01"]);
-  const paged = (await (await get(supervisor, "/locations?page=2&pageSize=3")).json()) as ListBody<LocationBody>;
+  const paged = (await (await get(admin, "/locations?page=2&pageSize=3")).json()) as ListBody<LocationBody>;
   assert.equal(paged.data.length, 1);
   assert.equal(paged.meta.totalPages, 2);
-  assert.equal((await get(supervisor, "/locations?active=maybe")).status, 400);
+  assert.equal((await get(admin, "/locations?active=maybe")).status, 400);
 });
 
 test("WO-I14: employees can read locations (master data), and the /api prefix works", async () => {
   assert.equal((await get(empA, "/locations")).status, 200);
-  assert.equal((await get(supervisor, "/api/warehouse/operations?pageSize=1")).status, 200);
+  assert.equal((await get(admin, "/api/warehouse/operations?pageSize=1")).status, 200);
 });
 
 test("WO-I15: the existing task routes are unchanged", async () => {
-  const res = await get(supervisor, "/tasks");
+  const res = await get(admin, "/tasks");
   assert.equal(res.status, 200);
   const body = (await res.json()) as ListBody<Record<string, unknown>>;
   assert.equal(body.meta.total, 5);

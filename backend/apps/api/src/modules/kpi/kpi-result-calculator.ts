@@ -39,6 +39,31 @@ export class KpiResultRequestError extends Error {
 export interface KpiResultScope {
   /** When set, only this employee's results are produced. */
   readonly employeeId?: string;
+  /**
+   * Depot isolation (depot-confined callers): only employees assigned to this
+   * depot, credited only for tasks of this depot. Applied in the SQL query.
+   */
+  readonly depotId?: string;
+}
+
+export interface EmployeePeriodTotals {
+  readonly employee: { readonly id: string; readonly code: string; readonly name: string | null };
+  readonly boxes: number;
+  readonly tasksCompleted: number;
+  readonly activeMinutes: number | null;
+  readonly averageTaskMinutes: number | null;
+  readonly taskIds: readonly string[];
+}
+
+export interface CompletedTaskFact {
+  readonly id: string;
+  readonly taskCode: string;
+  readonly operation: "LOADING" | "UNLOADING" | "OTHER";
+  readonly boxes: number;
+  readonly completedAt: Date;
+  readonly warehouse: string | null;
+  readonly activeMinutes: number | null;
+  readonly assignees: ReadonlyArray<{ readonly id: string; readonly name: string | null }>;
 }
 
 interface Definition {
@@ -155,7 +180,7 @@ export class KpiResultCalculator {
       throw new KpiResultRequestError("INVALID_WAREHOUSE", "warehouse_code", `Warehouse '${filter.warehouse_code}' does not exist.`);
     }
     const employeeId = scope.employeeId ?? filter.employee_id;
-    const contributions = await this.contributions({ kind, from, to, employeeId, warehouseCode: filter.warehouse_code });
+    const contributions = await this.contributions({ kind, from, to, employeeId, warehouseCode: filter.warehouse_code, depotId: scope.depotId });
 
     const results = await this.buildResults(definitions, contributions, kind, today, now, false);
     const search = filter.search?.toLowerCase();
@@ -173,11 +198,12 @@ export class KpiResultCalculator {
   /** One result by its deterministic id parts, with source references; null when there is no result. */
   public async get(
     id: { kpiId: string; employeeId: string; period: KpiResultPeriodKind; start: string },
-    now: Date
+    now: Date,
+    scope: KpiResultScope = {}
   ): Promise<KpiResultDetailDTO | null> {
     const definitions = await this.definitions({ kpi_id: id.kpiId }, true);
     if (definitions.length === 0) return null;
-    const contributions = await this.contributions({ kind: id.period, from: id.start, to: periodEndFor(id.period, id.start), employeeId: id.employeeId });
+    const contributions = await this.contributions({ kind: id.period, from: id.start, to: periodEndFor(id.period, id.start), employeeId: id.employeeId, depotId: scope.depotId });
     const [result] = await this.buildResults(definitions, contributions, id.period, this.today(now), now, true);
     return (result as KpiResultDetailDTO | undefined) ?? null;
   }
@@ -216,7 +242,7 @@ export class KpiResultCalculator {
       .filter((definition) => (!filter.metric || definition.calculation.metric === filter.metric) && (!filter.operation || definition.calculation.operation === filter.operation));
   }
 
-  private async contributions(args: { kind: KpiResultPeriodKind; from: string; to: string; employeeId?: string | undefined; warehouseCode?: string | undefined }): Promise<Contribution[]> {
+  private async contributions(args: { kind: KpiResultPeriodKind; from: string; to: string; employeeId?: string | undefined; warehouseCode?: string | undefined; depotId?: string | undefined }): Promise<Contribution[]> {
     const tz = this.timeZone;
     const bucketExpression =
       args.kind === "DAILY"
@@ -252,6 +278,7 @@ export class KpiResultCalculator {
 
     if (args.employeeId) query = query.where("task_assignments.employee_id", "=", args.employeeId);
     if (args.warehouseCode) query = query.where(sql<string>`upper(depots.code)`, "=", args.warehouseCode.toUpperCase());
+    if (args.depotId) query = query.where("tasks.depot_id", "=", args.depotId).where("employees.depot_id", "=", args.depotId);
 
     const rows = await query.orderBy("tasks.completed_at", "asc").orderBy("tasks.id", "asc").execute();
     const durations = await this.activeDurations([...new Set(rows.map((row) => row.task_id))]);
@@ -273,6 +300,109 @@ export class KpiResultCalculator {
         durationMs: durations.get(row.task_id) ?? null
       };
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Period aggregates for the depot KPI dashboard. Same attribution, timing and
+  // rounding as KPI results; nothing is persisted.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Per-employee totals over local dates [from, to]: BOX shared equally between
+   * the assignees at completion, completed tasks, recorded active time and the
+   * average active time per timed task. `scope.depotId` limits it to depot
+   * employees on depot tasks (depot isolation), exactly as KPI results.
+   */
+  public async employeeTotals(from: string, to: string, scope: KpiResultScope): Promise<EmployeePeriodTotals[]> {
+    const contributions = await this.contributions({ kind: "DAILY", from, to, employeeId: scope.employeeId, depotId: scope.depotId });
+    const byEmployee = new Map<string, Contribution[]>();
+    for (const contribution of contributions) {
+      byEmployee.set(contribution.employeeId, [...(byEmployee.get(contribution.employeeId) ?? []), contribution]);
+    }
+    return [...byEmployee.values()]
+      .map((tasks) => {
+        const first = tasks[0] as Contribution;
+        const { num, den } = sharedBoxes(tasks);
+        const timed = tasks.filter((task) => task.durationMs !== null);
+        const totalMs = timed.reduce((sum, task) => sum + BigInt(Math.round(task.durationMs as number)), 0n);
+        return {
+          employee: { id: first.employeeId, code: first.employeeCode, name: first.employeeName },
+          boxes: ratio2(num, den),
+          tasksCompleted: tasks.length,
+          activeMinutes: timed.length > 0 ? ratio2(totalMs, 60_000n) : null,
+          averageTaskMinutes: timed.length > 0 ? ratio2(totalMs, 60_000n * BigInt(timed.length)) : null,
+          taskIds: tasks.map((task) => task.taskId)
+        };
+      })
+      .sort((left, right) => (left.employee.name ?? left.employee.code).localeCompare(right.employee.name ?? right.employee.code) || left.employee.id.localeCompare(right.employee.id));
+  }
+
+  /** Completed tasks of the depot (all depots when undefined) over local dates [from, to], with timing and assignees at completion. */
+  public async completedTasks(from: string, to: string, depotId: string | undefined): Promise<CompletedTaskFact[]> {
+    const tz = this.timeZone;
+    let query = this.database
+      .selectFrom("tasks")
+      .leftJoin("depots", "depots.id", "tasks.depot_id")
+      .select(["tasks.id", "tasks.task_type", "tasks.completed_box_quantity", "tasks.completed_at", "depots.code as depot_code"])
+      .where("tasks.status", "=", "COMPLETED")
+      .where("tasks.completed_at", "is not", null)
+      .where(sql<boolean>`tasks.completed_at >= (${from}::timestamp at time zone ${tz})`)
+      .where(sql<boolean>`tasks.completed_at < ((${addDays(to, 1)})::timestamp at time zone ${tz})`);
+    if (depotId) query = query.where("tasks.depot_id", "=", depotId);
+    const rows = await query.orderBy("tasks.completed_at", "asc").orderBy("tasks.id", "asc").execute();
+    const taskIds = rows.map((row) => row.id);
+    const [durations, assignees] = await Promise.all([this.activeDurations(taskIds), this.assigneesAtCompletion(taskIds)]);
+    return rows.map((row) => {
+      const operation = classifyTaskType(row.task_type);
+      const durationMs = durations.get(row.id) ?? null;
+      return {
+        id: row.id,
+        taskCode: taskDisplayCode(row.id),
+        operation: operation === "LOADING" || operation === "UNLOADING" ? operation : "OTHER",
+        boxes: Number(row.completed_box_quantity ?? 0),
+        completedAt: row.completed_at as Date,
+        warehouse: row.depot_code,
+        activeMinutes: durationMs === null ? null : ratio2(BigInt(Math.round(durationMs)), 60_000n),
+        assignees: assignees.get(row.id) ?? []
+      };
+    });
+  }
+
+  /** Tasks registered (created) over local dates [from, to], counted by operation. */
+  public async registeredTaskCounts(from: string, to: string, depotId: string | undefined): Promise<{ loading: number; unloading: number; other: number }> {
+    const tz = this.timeZone;
+    let query = this.database
+      .selectFrom("tasks")
+      .select(["task_type"])
+      .where(sql<boolean>`tasks.created_at >= (${from}::timestamp at time zone ${tz})`)
+      .where(sql<boolean>`tasks.created_at < ((${addDays(to, 1)})::timestamp at time zone ${tz})`);
+    if (depotId) query = query.where("depot_id", "=", depotId);
+    const counts = { loading: 0, unloading: 0, other: 0 };
+    for (const row of await query.execute()) {
+      const operation = classifyTaskType(row.task_type);
+      if (operation === "LOADING") counts.loading += 1;
+      else if (operation === "UNLOADING") counts.unloading += 1;
+      else counts.other += 1;
+    }
+    return counts;
+  }
+
+  private async assigneesAtCompletion(taskIds: string[]): Promise<Map<string, Array<{ id: string; name: string | null }>>> {
+    const result = new Map<string, Array<{ id: string; name: string | null }>>();
+    if (taskIds.length === 0) return result;
+    const rows = await this.database
+      .selectFrom("task_assignments")
+      .innerJoin("tasks", "tasks.id", "task_assignments.task_id")
+      .innerJoin("employees", "employees.id", "task_assignments.employee_id")
+      .select(["task_assignments.task_id", "employees.id", "employees.name"])
+      .where("task_assignments.task_id", "in", taskIds)
+      .where(sql<boolean>`task_assignments.assigned_at <= tasks.completed_at and (task_assignments.unassigned_at is null or task_assignments.unassigned_at > tasks.completed_at)`)
+      .orderBy("employees.name", "asc")
+      .execute();
+    for (const row of rows) {
+      result.set(row.task_id, [...(result.get(row.task_id) ?? []), { id: row.id, name: row.name }]);
+    }
+    return result;
   }
 
   /** Active working time per task from start/pause/resume/complete events; null without a start. */
