@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadManagementDetail, loadManagementList } from './management-data';
+import { loadManagementDetail, loadManagementList, managementListView } from './management-data';
 
 interface TestItem { id: string; name: string; category: string }
 const item = (id: string, category = 'Operations'): TestItem => ({ id, name: `Report ${id}`, category });
@@ -28,5 +28,24 @@ describe('management data loading', () => {
     const getById = vi.fn().mockResolvedValueOnce(item('1')).mockResolvedValueOnce(undefined);
     await expect(loadManagementDetail({ getById }, '1')).resolves.toMatchObject({ id: '1' });
     await expect(loadManagementDetail({ getById }, 'missing')).resolves.toBeUndefined();
+  });
+});
+
+describe('management list view', () => {
+  const state = { loading: false, loaded: true, error: null, itemCount: 3, filtered: false };
+
+  it('shows the loading state only until the first response, so a reload keeps the search field mounted', () => {
+    expect(managementListView({ ...state, loading: true, loaded: false })).toBe('loading');
+    expect(managementListView({ ...state, loading: true, loaded: true })).toBe('content');
+  });
+
+  it('a search or filter that matches nothing keeps the controls; only an unfiltered empty list shows "no records"', () => {
+    expect(managementListView({ ...state, itemCount: 0, filtered: true })).toBe('content');
+    expect(managementListView({ ...state, itemCount: 0, filtered: false })).toBe('empty');
+  });
+
+  it('a request error is still shown', () => {
+    expect(managementListView({ ...state, error: 'Forbidden' })).toBe('error');
+    expect(managementListView({ ...state, loading: true, loaded: false, error: null })).toBe('loading');
   });
 });

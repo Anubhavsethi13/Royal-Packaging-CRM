@@ -32,6 +32,21 @@ export async function loadManagementList<T>(repository: ListRepository<T>, mode:
   return { items: sorted.slice((page - 1) * request.pageSize, page * request.pageSize), page, pageSize: request.pageSize, total: sorted.length, stale: result.stale };
 }
 
+export type ManagementListView = 'loading' | 'error' | 'empty' | 'content';
+
+/**
+ * What a management list shows. The loading state replaces the page only until the first response,
+ * and the "no records" state only when no search or filter is active: otherwise each keystroke
+ * unmounted the search field (losing focus and input), and a filter that matched nothing hid the
+ * controls needed to clear it.
+ */
+export function managementListView(state: { loading: boolean; loaded: boolean; error: string | null; itemCount: number; filtered: boolean }): ManagementListView {
+  if (state.loading && !state.loaded) return 'loading';
+  if (state.error) return 'error';
+  if (state.itemCount === 0 && !state.filtered) return 'empty';
+  return 'content';
+}
+
 export function loadManagementDetail<T>(repository: DetailRepository<T>, id: string): Promise<T | undefined> {
   return repository.getById(id);
 }
