@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import http from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 import {
@@ -672,6 +673,93 @@ test("1. Health check endpoints (/health, /health/ready)", async () => {
     assert.equal(readyBody.data.database.ready, true);
   } finally {
     await ctx.close();
+  }
+});
+
+/** Sends a HEAD request over raw node:http so any bytes the server writes in the body are observable. */
+async function rawHead(url: string): Promise<{ status: number; headers: http.IncomingHttpHeaders; bodyBytes: number }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(url, { method: "HEAD" }, (res) => {
+      let bodyBytes = 0;
+      res.on("data", (chunk: Buffer) => {
+        bodyBytes += chunk.length;
+      });
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, bodyBytes }));
+      res.on("error", reject);
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+test("1b. HEAD /health and /health/ready mirror GET status without a body (UptimeRobot compatibility)", async () => {
+  const ctx = await startTestServer();
+  try {
+    for (const path of ["/health", "/health/ready", "/api/health", "/api/health/ready"]) {
+      const headRes = await rawHead(`${ctx.baseUrl}${path}`);
+      assert.equal(headRes.status, 200, `HEAD ${path} should be 200`);
+      assert.equal(headRes.bodyBytes, 0, `HEAD ${path} must not send a body`);
+      assert.equal(headRes.headers["content-type"], "application/json; charset=utf-8");
+
+      const getRes = await fetch(`${ctx.baseUrl}${path}`);
+      assert.equal(getRes.status, headRes.status, `HEAD ${path} must match GET status`);
+    }
+
+    // GET contracts unchanged.
+    const healthBody = await (await fetch(`${ctx.baseUrl}/health`)).json() as Record<string, unknown>;
+    assert.deepEqual(Object.keys(healthBody).sort(), ["data", "success"]);
+    const healthData = healthBody.data as Record<string, unknown>;
+    assert.deepEqual(Object.keys(healthData).sort(), ["status", "timestamp"]);
+    assert.equal(healthBody.success, true);
+    assert.equal(healthData.status, "ok");
+
+    const readyBody = await (await fetch(`${ctx.baseUrl}/health/ready`)).json() as Record<string, unknown>;
+    assert.deepEqual(Object.keys(readyBody).sort(), ["data", "success"]);
+    const readyData = readyBody.data as Record<string, unknown>;
+    assert.deepEqual(Object.keys(readyData).sort(), ["database", "status", "timestamp"]);
+    assert.equal(readyBody.success, true);
+    assert.equal(readyData.status, "ok");
+    assert.deepEqual(readyData.database, { ready: true });
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("1c. HEAD /health/ready returns the same failure status as GET when the database is unavailable", async () => {
+  const healthy = createMockDatabase(new MockDatabaseState());
+  const failingQuery = async (): Promise<never> => {
+    throw new Error("simulated database outage");
+  };
+  const database = {
+    ...healthy,
+    getExecutor: () => ({ ...healthy.getExecutor(), executeQuery: failingQuery }),
+    executeQuery: failingQuery
+  } as unknown as DatabaseConnection;
+
+  const app = createApiApp({ database });
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    const getRes = await fetch(`${baseUrl}/health/ready`);
+    assert.equal(getRes.status, 503);
+    const getBody = await getRes.json() as { success: boolean; data: { status: string; database: { ready: boolean } } };
+    assert.equal(getBody.success, false);
+    assert.equal(getBody.data.status, "degraded");
+    assert.equal(getBody.data.database.ready, false);
+
+    const headRes = await rawHead(`${baseUrl}/health/ready`);
+    assert.equal(headRes.status, getRes.status);
+    assert.equal(headRes.bodyBytes, 0);
+
+    // Liveness does not depend on the database.
+    assert.equal((await rawHead(`${baseUrl}/health`)).status, 200);
+  } finally {
+    console.error = originalConsoleError;
+    await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   }
 });
 

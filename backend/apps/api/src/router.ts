@@ -57,6 +57,15 @@ export class Router {
     return this.addRoute("GET", path, handlers);
   }
 
+  /**
+   * Registers a HEAD route. Unlike Express, this router has no implicit
+   * HEAD-to-GET fallback, so HEAD must be registered explicitly. Node's
+   * ServerResponse omits the body for HEAD requests automatically.
+   */
+  public head(path: string, ...handlers: [...Middleware[], RouteHandler]): this {
+    return this.addRoute("HEAD", path, handlers);
+  }
+
   public post(path: string, ...handlers: [...Middleware[], RouteHandler]): this {
     return this.addRoute("POST", path, handlers);
   }

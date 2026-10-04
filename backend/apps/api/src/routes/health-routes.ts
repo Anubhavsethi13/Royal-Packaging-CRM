@@ -3,7 +3,7 @@ import type { ApiContext, Router } from "../router.js";
 import { sendJson } from "../utils/http-utils.js";
 
 export function registerHealthRoutes(router: Router, database?: DatabaseConnection): void {
-  router.get("/health", (ctx: ApiContext) => {
+  const liveness = (ctx: ApiContext): void => {
     sendJson(ctx.res, 200, {
       success: true,
       data: {
@@ -11,9 +11,9 @@ export function registerHealthRoutes(router: Router, database?: DatabaseConnecti
         timestamp: new Date().toISOString()
       }
     });
-  });
+  };
 
-  router.get("/health/ready", async (ctx: ApiContext) => {
+  const readiness = async (ctx: ApiContext): Promise<void> => {
     let dbReady = false;
 
     if (database) {
@@ -40,5 +40,12 @@ export function registerHealthRoutes(router: Router, database?: DatabaseConnecti
         }
       }
     });
-  });
+  };
+
+  // HEAD reuses the GET handlers so uptime monitors that only send HEAD
+  // (e.g. UptimeRobot Free) observe the same status code as GET.
+  router.get("/health", liveness);
+  router.head("/health", liveness);
+  router.get("/health/ready", readiness);
+  router.head("/health/ready", readiness);
 }
