@@ -231,7 +231,7 @@ export interface PayrollRecord {
   employees: number;
   baseAmount: string;
   incentiveAmount: string;
-  status: 'Draft preview' | 'Pending approval' | 'Approved';
+  status: 'Draft preview' | 'Pending approval' | 'Approved' | 'Rejected';
   updatedAt: string;
 }
 

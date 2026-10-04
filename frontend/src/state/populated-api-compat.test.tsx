@@ -88,3 +88,44 @@ describe('populated API records render through the default repositories', () => 
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+// `GET /payroll` and `GET /incentives/ledger` return `{ success, data: [] }` with no `meta` (each row
+// carries a camelCase mirror). Before this, Payroll failed on `meta.page` and Incentives called the
+// non-existent `/incentives` (404).
+const payrollEntry = (id: string, status: string, amount: string) => ({ id, incentive_ledger_id: `l-${id}`, incentiveLedgerId: `l-${id}`, employee_id: 'e-1', employeeId: 'e-1', amount, status, created_at: '2026-10-02T11:02:45.000Z', createdAt: '2026-10-02T11:02:45.000Z', updated_at: '2026-10-03T09:00:00.000Z', updatedAt: '2026-10-03T09:00:00.000Z', version: '1', approvals: [] });
+const ledgerEntry = (id: string, status: string, amount: string) => ({ id, task_id: 't-a1', taskId: 't-a1', employee_id: 'e-1', employeeId: 'e-1', incentive_rule_id: null, incentiveRuleId: null, amount, status, idempotency_key: 'k', idempotencyKey: 'k', created_at: '2026-10-02T11:02:45.000Z', createdAt: '2026-10-02T11:02:45.000Z', updated_at: '2026-10-02T11:02:45.000Z', updatedAt: '2026-10-02T11:02:45.000Z', version: '1' });
+
+describe('Super Admin finance lists use the backend contract (unpaged envelope)', () => {
+  it('Payroll: reads GET /payroll without meta, maps every status, and pages on the client', async () => {
+    serve({ '/payroll': { success: true, data: [payrollEntry('p-1', 'PENDING', '450.00'), payrollEntry('p-2', 'APPROVED', '300.00'), payrollEntry('p-3', 'REJECTED', '120.50')] } });
+    const first = await repositories().payroll.list({ page: 1, pageSize: 2, sortBy: 'period', sortDirection: 'asc' });
+    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).pathname).toBe('/api/payroll');
+    expect(first).toMatchObject({ page: 1, pageSize: 2, total: 3 });
+    expect(first.items.map((item) => [item.id, item.status, item.incentiveAmount, item.period, item.baseAmount])).toEqual([['p-1', 'Pending approval', '450.00', 'Not recorded', 'Not recorded'], ['p-2', 'Approved', '300.00', 'Not recorded', 'Not recorded']]);
+    const second = await repositories().payroll.list({ page: 2, pageSize: 2 });
+    expect(second.items.map((item) => [item.id, item.status])).toEqual([['p-3', 'Rejected']]);
+    for (const item of [...first.items, ...second.items]) expect(() => renders(item.status)).not.toThrow();
+  });
+
+  it('Payroll: an empty list loads (no "reading \'page\'" failure); an unknown status is a contract error', async () => {
+    serve({ '/payroll': { success: true, data: [] } });
+    await expect(repositories().payroll.list({ page: 1, pageSize: 50 })).resolves.toMatchObject({ items: [], total: 0, page: 1 });
+    serve({ '/payroll': { success: true, data: [payrollEntry('p-9', 'PAID', '1.00')] } });
+    await expect(repositories().payroll.list({ page: 1, pageSize: 50 })).rejects.toThrow();
+  });
+
+  it('Incentives: reads GET /incentives/ledger, never shows IDs or the idempotency key as names', async () => {
+    serve({ '/incentives/ledger': { success: true, data: [ledgerEntry('l-1', 'PENDING', '225.00'), ledgerEntry('l-2', 'APPROVED', '90.00')] } });
+    const { items, total } = await repositories().incentives.list({ page: 1, pageSize: 50, sortBy: 'createdAt', sortDirection: 'asc' });
+    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).pathname).toBe('/api/incentives/ledger');
+    expect(total).toBe(2);
+    expect(items.map((item) => [item.id, item.employee, item.task, item.event, item.points, item.amount, item.status])).toEqual([['l-1', 'Not recorded', 'Not recorded', '—', '—', '225.00', 'Pending review'], ['l-2', 'Not recorded', 'Not recorded', '—', '—', '90.00', 'Approved']]);
+    expect(JSON.stringify(items)).not.toMatch(/e-1|t-a1|"k"/);
+    for (const item of items) expect(() => renders(item.status)).not.toThrow();
+  });
+
+  it('Incentives: a backend 403 surfaces as an error, never as data', async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ success: false, code: 'FORBIDDEN', message: 'Forbidden' }), { status: 403 }));
+    await expect(repositories().incentives.list({ page: 1, pageSize: 50 })).rejects.toThrow();
+  });
+});

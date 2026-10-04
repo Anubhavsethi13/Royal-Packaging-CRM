@@ -1,4 +1,6 @@
+import { z } from 'zod';
 import { ApiError, apiRequest } from './client';
+import { parseContract } from './contract-validation';
 import type { ApiListEnvelope, ApiMutationEnvelope } from './contracts';
 import { appendQueryString } from './query-string';
 import type { ListQuery, ListResponse, MutableRepository, Repository } from '../mock/repositories';
@@ -20,6 +22,12 @@ export interface ApiRepositoryConfig<T extends { id: string }> {
    * so an empty page is returned without a request.
    */
   mapListQuery?: (query: ListQuery | undefined) => ListQuery | undefined | null;
+  /**
+   * `paged` (default): the documented `{ data, meta }` envelope. `unpaged`: the resource returns its
+   * whole list as `{ data: [] }` with no paging parameters or `meta` (payroll, incentive ledger), so
+   * the requested page is sliced here and the total is the length of what the server returned.
+   */
+  listEnvelope?: 'paged' | 'unpaged';
 }
 
 export function createUnavailableRepository<T extends { id: string }>(message: string): ApiRepository<T> {
@@ -53,6 +61,22 @@ export async function apiListRequest<T>(resourcePath: string, query?: ListQuery,
   return toListResponse(payload, decodeItem);
 }
 
+const unpagedListEnvelopeSchema = z.object({ data: z.array(z.unknown()) });
+
+export async function apiUnpagedListRequest<T>(resourcePath: string, query?: ListQuery, decodeItem?: (item: unknown) => T): Promise<ListResponse<T>> {
+  const { data } = parseContract(unpagedListEnvelopeSchema, await apiRequest<unknown>(resourcePath), resourcePath);
+  const all = decodeItem ? data.map((item) => decodeItem(item)) : (data as T[]);
+  const pageSize = query?.pageSize && query.pageSize > 0 ? query.pageSize : Math.max(all.length, 1);
+  const page = Math.min(Math.max(query?.page ?? 1, 1), Math.max(1, Math.ceil(all.length / pageSize)));
+  return { items: all.slice((page - 1) * pageSize, page * pageSize), page, pageSize, total: all.length, stale: false };
+}
+
+function listRequest<T>(config: ApiRepositoryConfig<T & { id: string }>, query?: ListQuery): Promise<ListResponse<T>> {
+  return config.listEnvelope === 'unpaged'
+    ? apiUnpagedListRequest<T>(config.resourcePath, query, config.decodeItem)
+    : apiListRequest<T>(config.resourcePath, query, config.decodeItem);
+}
+
 export async function apiDetailRequest<T>(path: string, decode: DetailDecoder<T>): Promise<T> {
   const payload = await apiRequest<unknown>(path);
   return decode(payload);
@@ -83,7 +107,7 @@ export function createApiRepository<T extends { id: string }>(config: ApiReposit
     async list(query) {
       const mapped = config.mapListQuery ? config.mapListQuery(query) : query;
       if (mapped === null) return { items: [], page: 1, pageSize: query?.pageSize ?? 0, total: 0, stale: false };
-      return apiListRequest<T>(config.resourcePath, mapped, config.decodeItem);
+      return listRequest<T>(config, mapped);
     },
     async getById(id) {
       try {
@@ -103,7 +127,7 @@ export function createApiMutableRepository<T extends { id: string }, TCreateBody
     async list(query) {
       const mapped = config.mapListQuery ? config.mapListQuery(query) : query;
       if (mapped === null) return { items: [], page: 1, pageSize: query?.pageSize ?? 0, total: 0, stale: false };
-      return apiListRequest<T>(config.resourcePath, mapped, config.decodeItem);
+      return listRequest<T>(config, mapped);
     },
     async getById(id) {
       try {
