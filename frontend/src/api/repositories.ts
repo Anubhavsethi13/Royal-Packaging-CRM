@@ -24,8 +24,9 @@ export interface ApiRepositoryConfig<T extends { id: string }> {
   mapListQuery?: (query: ListQuery | undefined) => ListQuery | undefined | null;
   /**
    * `paged` (default): the documented `{ data, meta }` envelope. `unpaged`: the resource returns its
-   * whole list as `{ data: [] }` with no paging parameters or `meta` (payroll, incentive ledger), so
-   * the requested page is sliced here and the total is the length of what the server returned.
+   * whole list as `{ data: [] }` with no paging parameters or `meta` (payroll, incentive ledger,
+   * reports, audit log), so search, filters and the requested page are applied here and the total
+   * is the number of matching records.
    */
   listEnvelope?: 'paged' | 'unpaged';
 }
@@ -65,7 +66,15 @@ const unpagedListEnvelopeSchema = z.object({ data: z.array(z.unknown()) });
 
 export async function apiUnpagedListRequest<T>(resourcePath: string, query?: ListQuery, decodeItem?: (item: unknown) => T): Promise<ListResponse<T>> {
   const { data } = parseContract(unpagedListEnvelopeSchema, await apiRequest<unknown>(resourcePath), resourcePath);
-  const all = decodeItem ? data.map((item) => decodeItem(item)) : (data as T[]);
+  const decoded = decodeItem ? data.map((item) => decodeItem(item)) : (data as T[]);
+  // The whole list is here, so the page's search and exact-match filters are applied to it.
+  const search = query?.search?.trim().toLowerCase() ?? '';
+  const filters = Object.entries(query?.filters ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1] !== '');
+  const all = decoded.filter((item) => {
+    const fields = item as Record<string, unknown>;
+    return filters.every(([key, value]) => String(fields[key]) === value)
+      && (!search || Object.values(fields).some((field) => typeof field === 'string' && field.toLowerCase().includes(search)));
+  });
   const pageSize = query?.pageSize && query.pageSize > 0 ? query.pageSize : Math.max(all.length, 1);
   const page = Math.min(Math.max(query?.page ?? 1, 1), Math.max(1, Math.ceil(all.length / pageSize)));
   return { items: all.slice((page - 1) * pageSize, page * pageSize), page, pageSize, total: all.length, stale: false };

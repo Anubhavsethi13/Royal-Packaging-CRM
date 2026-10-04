@@ -242,7 +242,7 @@ export interface AuditRecord {
   entity: string;
   entityId: string;
   timestamp: string;
-  result: 'Success' | 'Blocked' | 'Preview';
+  result: 'Success' | 'Blocked' | 'Preview' | 'Not recorded';
   before: string;
   after: string;
 }
@@ -254,5 +254,5 @@ export interface ReportRecord {
   cadence: string;
   lastRun: string;
   owner: string;
-  status: 'Ready' | 'Scheduled' | 'Preview';
+  status: 'Ready' | 'Scheduled' | 'Preview' | 'Not recorded';
 }

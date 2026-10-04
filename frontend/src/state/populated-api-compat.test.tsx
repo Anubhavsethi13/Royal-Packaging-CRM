@@ -129,3 +129,48 @@ describe('Super Admin finance lists use the backend contract (unpaged envelope)'
     await expect(repositories().incentives.list({ page: 1, pageSize: 50 })).rejects.toThrow();
   });
 });
+
+// `GET /audit-logs` (camelCase AuditLogEntryDTO) and `GET /reports` also return `{ success, data: [] }`
+// without `meta`. Before this, Audit called the non-existent `/audits` (404) and Reports failed on `meta.page`.
+const auditEntry = (id: string, source: string, eventType: string, extra: Record<string, unknown> = {}) => ({ id, source, eventType, eventAt: '2026-10-04T12:15:48.787Z', actorUserId: 'u-secret-1', actorEmployeeId: 'e-secret-1', taskId: null, correlationId: null, metadata: null, before: null, reason: null, requestId: null, ...extra });
+
+describe('Governance lists use the backend contract (unpaged envelope)', () => {
+  it('Audit: reads GET /audit-logs, maps source and event, and never shows actor IDs', async () => {
+    serve({ '/audit-logs': { success: true, data: [auditEntry('a-1', 'task', 'TASK_STARTED', { taskId: 't-a1' }), auditEntry('a-2', 'daily_report', 'DAILY_REPORT_CREATED', { metadata: { report_id: 'r-1' } }), auditEntry('a-3', 'incentive', 'INCENTIVE_APPROVED')] } });
+    const { items, total } = await repositories().audits.list({ page: 1, pageSize: 50, sortBy: 'timestamp', sortDirection: 'asc' });
+    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).pathname).toBe('/api/audit-logs');
+    expect(total).toBe(3);
+    expect(items.map((item) => [item.id, item.actor, item.action, item.entity, item.entityId, item.result, item.before, item.after])).toEqual([
+      ['a-1', 'Not recorded', 'TASK_STARTED', 'Task', 't-a1', 'Not recorded', '—', '—'],
+      ['a-2', 'Not recorded', 'DAILY_REPORT_CREATED', 'Daily report', 'r-1', 'Not recorded', '—', '—'],
+      ['a-3', 'Not recorded', 'INCENTIVE_APPROVED', 'Incentive', '—', 'Not recorded', '—', '—'],
+    ]);
+    expect(JSON.stringify(items)).not.toMatch(/secret/);
+    for (const item of items) expect(() => renders(item.result)).not.toThrow();
+  });
+
+  it('Audit: the page filters and search apply to the whole unpaged list', async () => {
+    serve({ '/audit-logs': { success: true, data: [auditEntry('a-1', 'task', 'TASK_STARTED', { taskId: 't-a1' }), auditEntry('a-2', 'daily_report', 'DAILY_REPORT_CREATED'), auditEntry('a-3', 'task', 'TASK_COMPLETED', { taskId: 't-a1' })] } });
+    const tasks = await repositories().audits.list({ page: 1, pageSize: 1, filters: { entity: 'Task' } });
+    expect(tasks).toMatchObject({ total: 2, page: 1, pageSize: 1 });
+    expect(tasks.items.map((item) => item.id)).toEqual(['a-1']);
+    expect((await repositories().audits.list({ page: 2, pageSize: 1, filters: { entity: 'Task' } })).items.map((item) => item.id)).toEqual(['a-3']);
+    expect((await repositories().audits.list({ page: 1, pageSize: 50, search: 'completed' })).items.map((item) => item.id)).toEqual(['a-3']);
+    expect((await repositories().audits.list({ page: 1, pageSize: 50, filters: { result: 'Blocked' } })).total).toBe(0);
+  });
+
+  it('Reports: reads GET /reports without meta and shows only the recorded name', async () => {
+    serve({ '/reports': { success: true, data: [{ id: 'rep-1', code: 'DAILY_OPS', name: 'Daily operations', description: null, created_at: '2026-10-01T00:00:00.000Z', createdAt: '2026-10-01T00:00:00.000Z', updated_at: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', version: '1' }] } });
+    const { items, total } = await repositories().reports.list({ page: 1, pageSize: 50, sortBy: 'name', sortDirection: 'asc' });
+    expect(total).toBe(1);
+    expect(items).toEqual([{ id: 'rep-1', name: 'Daily operations', category: 'Not recorded', cadence: 'Not recorded', lastRun: 'Not recorded', owner: 'Not recorded', status: 'Not recorded' }]);
+    serve({ '/reports': { success: true, data: [] } });
+    await expect(repositories().reports.list({ page: 1, pageSize: 50 })).resolves.toMatchObject({ items: [], total: 0 });
+  });
+
+  it('Audit and Reports: a backend 403 surfaces as an error, never as data', async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ success: false, code: 'FORBIDDEN', message: 'Forbidden' }), { status: 403 }));
+    await expect(repositories().audits.list({ page: 1, pageSize: 50 })).rejects.toThrow();
+    await expect(repositories().reports.list({ page: 1, pageSize: 50 })).rejects.toThrow();
+  });
+});

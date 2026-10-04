@@ -15,6 +15,7 @@ import type { KpiResultReadModel } from '../kpi/kpi-result-domain';
 import { kpiResultsApiRepositoryConfig } from '../kpi/kpi-result-api';
 import { mapEmployeeDtoToRecord } from '../pages/employee-data';
 import { mapIncentiveLedgerDtoToRecord, mapPayrollEntryDtoToRecord } from '../pages/finance-data';
+import { mapAuditLogDtoToRecord, mapReportDefinitionDtoToRecord } from '../pages/governance-data';
 import { mapInventoryDtoToRecord } from '../pages/inventory-data';
 import { decodeTaskDetail, decodeTaskListItem, mapTaskListQuery } from '../pages/task-data';
 import {
@@ -133,8 +134,8 @@ export function createDefaultApiRepositoryConfiguration(): ApiRepositoryConfigur
     kpiResults: kpiResultsApiRepositoryConfig,
     incentives: { resourcePath: '/incentives/ledger', decodeDetail: mapIncentiveLedgerDtoToRecord, decodeItem: mapIncentiveLedgerDtoToRecord, listEnvelope: 'unpaged' },
     payroll: { resourcePath: '/payroll', decodeDetail: mapPayrollEntryDtoToRecord, decodeItem: mapPayrollEntryDtoToRecord, listEnvelope: 'unpaged' },
-    audits: { resourcePath: '/audits', decodeDetail: decodePassthrough },
-    reports: { resourcePath: '/reports', decodeDetail: decodePassthrough },
+    audits: { resourcePath: '/audit-logs', decodeDetail: mapAuditLogDtoToRecord, decodeItem: mapAuditLogDtoToRecord, listEnvelope: 'unpaged' },
+    reports: { resourcePath: '/reports', decodeDetail: mapReportDefinitionDtoToRecord, decodeItem: mapReportDefinitionDtoToRecord, listEnvelope: 'unpaged' },
   };
 }
 
