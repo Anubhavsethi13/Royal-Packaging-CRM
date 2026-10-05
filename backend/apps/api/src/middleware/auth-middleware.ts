@@ -362,6 +362,17 @@ export class DatabaseRBACAuthorizationPolicy implements AuthorizationPolicy {
       case "daily_report:write_all":
         return isManagementTier;
 
+      // 13. Attendance synchronized from e-Time Office. No client decision on attendance
+      // visibility exists yet; this mirrors KPI results / shift entries: everyone may read their
+      // own records, reporting readers read every employee, only the admin tier runs or
+      // inspects synchronization.
+      case "attendance:read":
+        return isApprovedRole || isAccountant;
+      case "attendance:read_all":
+        return isReportingReader;
+      case "attendance:sync":
+        return isAdminTier;
+
       case "shift:read": {
         if (isManagementTier) {
           return true;

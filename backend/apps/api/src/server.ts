@@ -1,6 +1,7 @@
 import { loadConfig, loadProjectEnv } from "@royal-packaging/config";
 import { checkDatabaseHealth, createDatabaseFromEnvironment, destroyDatabase } from "@royal-packaging/db";
 import { createApiApp } from "./app.js";
+import { AttendancePoller } from "./modules/attendance/attendance-poller.js";
 
 async function main(): Promise<void> {
   // 1. Load environment variables from .env if present
@@ -35,13 +36,22 @@ async function main(): Promise<void> {
     );
   });
 
-  // 6. Graceful shutdown handler
+  // 6. e-Time Office attendance polling (opt-in: ETIME_SYNC_ENABLED=true with credentials).
+  const attendancePoller = config.ETIME_SYNC_ENABLED
+    ? new AttendancePoller({ syncService: app.services.attendanceSync, intervalMs: config.ETIME_POLL_INTERVAL_MINUTES * 60_000 })
+    : null;
+  attendancePoller?.start();
+
+  // 7. Graceful shutdown handler
   let isShuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
     if (isShuttingDown) return;
     isShuttingDown = true;
 
     console.log(`[INFO] Received ${signal}. Starting graceful shutdown...`);
+
+    // Stop polling; a sync in progress finishes its transaction first.
+    await attendancePoller?.stop().catch(() => {});
 
     // Stop accepting new HTTP connections
     server.close(async () => {

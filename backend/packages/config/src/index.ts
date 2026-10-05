@@ -21,6 +21,17 @@ const optionalUrl = z.preprocess(
   z.string().url().optional()
 );
 
+/** e-Time Office `LastRecord` / `MaxRecord` format: `MMyyyy$ID` (API Documentation.pdf, API 4). */
+export const ETIME_RECORD_PATTERN = /^(0[1-9]|1[0-2])\d{4}\$\d+$/;
+
+/** Documented e-Time Office base URL (API Documentation.pdf, "Base URL"). */
+export const ETIME_DEFAULT_BASE_URL = "https://api.etimeoffice.com/api/";
+
+const booleanFlag = z.preprocess(
+  (value) => (value === "" || value === undefined ? undefined : String(value).trim().toLowerCase()),
+  z.enum(["true", "false"]).optional()
+).transform((value) => value === "true");
+
 const databaseUrlSchema = z.string().url().refine(
   (value) => {
     const protocol = new URL(value).protocol;
@@ -56,7 +67,35 @@ export const environmentSchema = z
      * (frontend proxies /api to the backend); `none` is required when the browser
      * calls the backend on a different site and always forces `Secure`.
      */
-    SESSION_COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).default("lax")
+    SESSION_COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).default("lax"),
+    /**
+     * e-Time Office attendance integration (backend only; never exposed to the frontend).
+     * Credentials are optional so the API runs without the integration; the poller
+     * starts only when ETIME_SYNC_ENABLED=true and all three credentials are set.
+     */
+    ETIME_BASE_URL: z.preprocess(
+      (value) => (value === "" || value === undefined ? ETIME_DEFAULT_BASE_URL : value),
+      z.string().url().refine((value) => new URL(value).protocol === "https:", "ETIME_BASE_URL must use https")
+    ),
+    ETIME_CORPORATE_ID: optionalNonEmptyString,
+    ETIME_USERNAME: optionalNonEmptyString,
+    ETIME_PASSWORD: optionalNonEmptyString,
+    /** Provider-approved first `LastRecord` (`MMyyyy$ID`). Not documented by the provider; no default is invented. */
+    ETIME_INITIAL_LAST_RECORD: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().trim().regex(ETIME_RECORD_PATTERN, "ETIME_INITIAL_LAST_RECORD must use the MMyyyy$ID format").optional()
+    ),
+    ETIME_SYNC_ENABLED: booleanFlag,
+    /** `ALL` or one employee code for the incremental poll (API 4 `Empcode`). */
+    ETIME_SYNC_EMPCODE: z.preprocess((value) => (value === "" ? undefined : value), z.string().trim().min(1).default("ALL")),
+    /** Polling interval: a CRM configuration choice, not a provider requirement. */
+    ETIME_POLL_INTERVAL_MINUTES: z.preprocess((value) => (value === "" ? undefined : value), z.coerce.number().int().min(1).max(1440).default(5)),
+    ETIME_REQUEST_TIMEOUT_MS: z.preprocess((value) => (value === "" ? undefined : value), z.coerce.number().int().min(1000).max(300_000).default(30_000)),
+    /**
+     * Date parameter format for DownloadInOutPunchData. The documentation states dd/MM/yyyy_HH:mm for
+     * all dates, but this endpoint's example uses dd/MM/yyyy (PROVIDER CONFIRMATION REQUIRED).
+     */
+    ETIME_INOUT_DATE_FORMAT: z.preprocess((value) => (value === "" ? undefined : value), z.enum(["date", "datetime"]).default("date"))
   })
   .superRefine((value, context) => {
     const hasFlootEndpoint = value.FLOOT_ENDPOINT !== undefined;
@@ -68,6 +107,15 @@ export const environmentSchema = z
         message: "FLOOT_ENDPOINT and FLOOT_API_KEY must be configured together",
         path: hasFlootEndpoint ? ["FLOOT_API_KEY"] : ["FLOOT_ENDPOINT"]
       });
+    }
+
+    const etimeCredentials = [value.ETIME_CORPORATE_ID, value.ETIME_USERNAME, value.ETIME_PASSWORD];
+    const etimeConfigured = etimeCredentials.filter((entry) => entry !== undefined).length;
+    if (etimeConfigured !== 0 && etimeConfigured !== 3) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "ETIME_CORPORATE_ID, ETIME_USERNAME and ETIME_PASSWORD must be configured together", path: ["ETIME_CORPORATE_ID"] });
+    }
+    if (value.ETIME_SYNC_ENABLED && etimeConfigured !== 3) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "ETIME_SYNC_ENABLED requires ETIME_CORPORATE_ID, ETIME_USERNAME and ETIME_PASSWORD", path: ["ETIME_SYNC_ENABLED"] });
     }
 
     for (const origin of parseAllowedOrigins(value.FRONTEND_ORIGIN ?? "")) {

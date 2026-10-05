@@ -7,6 +7,9 @@ import {
   DatabaseRBACAuthorizationPolicy
 } from "./middleware/auth-middleware.js";
 import { InMemoryRateLimiter, rateLimit } from "./middleware/rate-limit-middleware.js";
+import { EtimeOfficeClient } from "./integrations/etime-office/etime-office-client.js";
+import { AttendanceReadService } from "./modules/attendance/attendance-read-service.js";
+import { AttendanceSyncService } from "./modules/attendance/attendance-sync-service.js";
 import { AuditService } from "./modules/audit/audit-service.js";
 import { ClientsService } from "./modules/clients/clients-service.js";
 import { DashboardService } from "./modules/dashboard/dashboard-service.js";
@@ -26,6 +29,7 @@ import { TaskService } from "./modules/warehouse/task-service.js";
 import { WarehouseOrchestrator } from "./modules/warehouse/warehouse-orchestrator.js";
 import { WarehouseReadService } from "./modules/warehouse/warehouse-read-service.js";
 import { Router } from "./router.js";
+import { registerAttendanceRoutes } from "./routes/attendance-routes.js";
 import { registerAuditRoutes } from "./routes/audit-routes.js";
 import { registerAuthRoutes } from "./routes/auth-routes.js";
 import { registerClientsRoutes } from "./routes/clients-routes.js";
@@ -69,6 +73,8 @@ export interface ApiAppOptions {
   readonly shiftEntryService?: ShiftEntryService;
   readonly warehouseReadService?: WarehouseReadService;
   readonly dailyReportService?: DailyReportService;
+  readonly attendanceSyncService?: AttendanceSyncService;
+  readonly attendanceReadService?: AttendanceReadService;
 }
 
 export interface ApiApp {
@@ -92,6 +98,8 @@ export interface ApiApp {
     readonly shiftEntries: ShiftEntryService;
     readonly warehouseRead: WarehouseReadService;
     readonly dailyReports: DailyReportService;
+    readonly attendanceSync: AttendanceSyncService;
+    readonly attendanceRead: AttendanceReadService;
   };
   readonly authorizationPolicy: AuthorizationPolicy;
   handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void>;
@@ -156,6 +164,31 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     options.dailyReportService ??
     new DailyReportService({ database, ...(appConfig ? { timeZone: appConfig.OPERATIONS_TIMEZONE } : {}) });
 
+  // e-Time Office attendance (backend only). The client exists only when all three
+  // credentials are configured; without them sync reports NOT_CONFIGURED.
+  const etimeCredentials =
+    appConfig?.ETIME_CORPORATE_ID && appConfig.ETIME_USERNAME && appConfig.ETIME_PASSWORD
+      ? { corporateId: appConfig.ETIME_CORPORATE_ID, username: appConfig.ETIME_USERNAME, password: appConfig.ETIME_PASSWORD }
+      : null;
+  const etimeClient =
+    appConfig && etimeCredentials
+      ? new EtimeOfficeClient({ baseUrl: appConfig.ETIME_BASE_URL, credentials: etimeCredentials, timeoutMs: appConfig.ETIME_REQUEST_TIMEOUT_MS, inOutDateFormat: appConfig.ETIME_INOUT_DATE_FORMAT })
+      : null;
+  const attendanceSyncService =
+    options.attendanceSyncService ??
+    new AttendanceSyncService({ database, client: etimeClient, initialLastRecord: appConfig?.ETIME_INITIAL_LAST_RECORD, empcode: appConfig?.ETIME_SYNC_EMPCODE ?? "ALL" });
+  const attendanceReadService =
+    options.attendanceReadService ??
+    new AttendanceReadService({
+      database,
+      settings: {
+        configured: attendanceSyncService.configured,
+        pollingEnabled: appConfig?.ETIME_SYNC_ENABLED ?? false,
+        pollIntervalMinutes: appConfig?.ETIME_POLL_INTERVAL_MINUTES ?? 5,
+        empcode: attendanceSyncService.syncEmpcode
+      }
+    });
+
   // Default to server-side authoritative RBAC policy
   const authorizationPolicy =
     options.authorizationPolicy ??
@@ -199,6 +232,7 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   registerShiftEntryRoutes(router, authService, shiftEntryService, authorizationPolicy, depotDirectory);
   registerWarehouseOperationsRoutes(router, authService, warehouseReadService, authorizationPolicy, depotDirectory);
   registerDailyReportRoutes(router, authService, dailyReportService, authorizationPolicy);
+  registerAttendanceRoutes(router, authService, attendanceReadService, attendanceSyncService, authorizationPolicy);
 
   const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     await router.handle(req, res);
@@ -236,7 +270,9 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
       reports: reportService,
       shiftEntries: shiftEntryService,
       warehouseRead: warehouseReadService,
-      dailyReports: dailyReportService
+      dailyReports: dailyReportService,
+      attendanceSync: attendanceSyncService,
+      attendanceRead: attendanceReadService
     },
     authorizationPolicy,
     handleRequest,

@@ -519,6 +519,97 @@ export interface DepotDailyReportEventsTable {
   metadata: string | null;
 }
 
+export interface AttendanceSyncStateTable {
+  id: string;
+  provider: string;
+  scope: string;
+  empcode: string;
+  last_record: string | null;
+  last_attempt_at: Date | null;
+  last_success_at: Date | null;
+  records_received: Generated<number>;
+  records_inserted: Generated<number>;
+  sync_status: Generated<string>;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  version: Version;
+}
+
+export interface AttendanceSyncRunsTable {
+  id: string;
+  provider: string;
+  endpoint: string;
+  empcode: string;
+  trigger: string;
+  actor_user_id: string | null;
+  status: string;
+  request_last_record: string | null;
+  response_max_record: string | null;
+  request_from: string | null;
+  request_to: string | null;
+  records_received: Generated<number>;
+  records_inserted: Generated<number>;
+  duplicates: Generated<number>;
+  unmapped: Generated<number>;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: Timestamp;
+  finished_at: Date | null;
+}
+
+export interface AttendancePunchesTable {
+  id: string;
+  employee_id: string | null;
+  employee_code: string;
+  /** Provider wall-clock time, `YYYY-MM-DD HH:mm:ss` (timestamp without time zone). */
+  punched_at_local: string;
+  machine_id: string | null;
+  machine_flag: string | null;
+  external_record_id: string | null;
+  external_table: string | null;
+  emp_card_no: string | null;
+  provider_employee_name: string | null;
+  source: string;
+  sync_run_id: string;
+  created_at: Timestamp;
+}
+
+export interface AttendanceDailyRecordsTable {
+  id: string;
+  employee_id: string | null;
+  employee_code: string;
+  attendance_date: string;
+  in_time: string | null;
+  out_time: string | null;
+  work_minutes: number | null;
+  overtime_minutes: number | null;
+  late_in_minutes: number | null;
+  early_out_minutes: number | null;
+  status: string | null;
+  remark: string | null;
+  provider_employee_name: string | null;
+  raw_in_time: string | null;
+  raw_out_time: string | null;
+  source: Generated<string>;
+  sync_run_id: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface AttendanceSyncExceptionsTable {
+  id: string;
+  sync_run_id: string;
+  provider: string;
+  empcode: string;
+  error_type: string;
+  error_message: string;
+  payload: string;
+  created_at: Timestamp;
+  resolved_at: Date | null;
+}
+
 export interface RoyalPackagingDatabase {
   users: UsersTable;
   sessions: SessionsTable;
@@ -563,6 +654,11 @@ export interface RoyalPackagingDatabase {
   depot_daily_reports: DepotDailyReportsTable;
   depot_daily_report_vehicles: DepotDailyReportVehiclesTable;
   depot_daily_report_events: DepotDailyReportEventsTable;
+  attendance_sync_state: AttendanceSyncStateTable;
+  attendance_sync_runs: AttendanceSyncRunsTable;
+  attendance_punches: AttendancePunchesTable;
+  attendance_daily_records: AttendanceDailyRecordsTable;
+  attendance_sync_exceptions: AttendanceSyncExceptionsTable;
 }
 
 
